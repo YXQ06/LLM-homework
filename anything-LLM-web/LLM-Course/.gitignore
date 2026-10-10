@@ -13,3 +13,6 @@ __pycache__/
 # 密钥文件
 .env
 .env.*
+
+# 已从仓库移除，仅本地保留
+Agent/Practice01/test_api.py
