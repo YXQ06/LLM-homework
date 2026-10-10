@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>上传文档到 AnythingLLM</title>
+<style>
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
+  input, button, select { font-size: 14px; margin: 4px 0; }
+  #box { border: 1px dashed #bbb; border-radius: 8px; padding: 24px; background: #fafafa; }
+  progress { width: 100%; height: 18px; }
+  #log { background: #111; color: #0f0; font-family: Consolas, monospace; font-size: 12px;
+         padding: 10px; height: 300px; overflow: auto; white-space: pre-wrap; border-radius: 6px; }
+  button { padding: 6px 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h2>上传文档到 AnythingLLM 第一个工作区</h2>
+<div id="box">
+  <input type="file" id="file" multiple>
+  <div>
+    <label>切片长度 <input type="number" id="chunkSize" value="1000" style="width:80px"></label>
+    <label>重叠 <input type="number" id="chunkOverlap" value="20" style="width:80px"></label>
+    <label>切分符 <input type="text" id="splitOn" value="n" style="width:40px"></label>
+  </div>
+  <button id="btn" disabled>开始上传并向量化</button>
+  <progress id="bar" value="0" max="100"></progress>
+  <p id="stat"></p>
+</div>
+<h4>日志</h4>
+<div id="log"></div>
+
+<script>
+const API = 'http://localhost:3001/api/v1/document/upload';
+const KEY = '2QV8DFB-ZF84QYP-NM96ZJQ-4C01N98';
+const SLUG = 'e336cfd9-7013-4a1d-9ccc-d4edd2aee4ea';
+
+const $ = id => document.getElementById(id);
+const log = (m, c) => {
+  const t = new Date().toLocaleTimeString();
+  $('log').innerHTML += `<span style="color:#666">${t}</span> <span style="color:${c||'#0f0'}">${m}</span>\n`;
+  $('log').scrollTop = $('log').scrollHeight;
+};
+
+$('file').onchange = e => { $('btn').disabled = !e.target.files.length; };
+
+$('btn').onclick = () => {
+  const files = [...$('file').files];
+  const options = {
+    chunkSize: +$('chunkSize').value || 1000,
+    chunkOverlap: +$('chunkOverlap').value || 20,
+    splitOn: $('splitOn').value || 'n',
+    addToWorkspaces: [SLUG]
+  };
+
+  let done = 0, ok = 0, failed = 0;
+  (async () => {
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append('document', f, f.name);
+      fd.append('options', JSON.stringify(options));
+      try {
+        const res = await fetch(`${API}?slug=${encodeURIComponent(SLUG)}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${KEY}` },
+          body: fd
+        });
+        const text = await res.text();
+        if (!res.ok) throw new Error(res.status + ' ' + text);
+        ok++;
+        log(`✅ ${f.name} -> ${text}`, '#0f0');
+      } catch (e) {
+        failed++;
+        log(`❌ ${f.name} -> ${e.message}`, '#f44');
+      }
+      done++;
+      $('bar').value = done / files.length * 100;
+      $('stat').textContent = `进度 ${done}/${files.length}　成功 ${ok}　失败 ${failed}`;
+    }
+    log(`完成：成功 ${ok}，失败 ${failed}`, '#ff0');
+    $('btn').disabled = false;
+  })();
+};
+</script>
+</body>
+</html>
