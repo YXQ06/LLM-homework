@@ -1,0 +1,4 @@
+# 运行 xAgent 所需依赖
+requests>=2.31
+textual>=8.2.8
+trafilatura>=2.0

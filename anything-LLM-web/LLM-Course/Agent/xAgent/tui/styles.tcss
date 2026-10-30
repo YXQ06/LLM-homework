@@ -1,0 +1,78 @@
+/* xAgent TUI 样式 */
+
+Screen {
+    background: $surface;
+}
+
+Header {
+    background: $primary;
+    color: $text;
+}
+
+#main {
+    height: 1fr;
+    layout: vertical;
+}
+
+#log-container {
+    height: 1fr;
+    border: tall $primary-darken-2;
+    margin: 1 1 0 1;
+    padding: 1 2;
+}
+
+#chat-log {
+    background: $panel;
+}
+
+#input-container {
+    height: auto;
+    min-height: 3;
+    layout: horizontal;
+    align-vertical: middle;
+    border: tall $primary;
+    margin: 0 1 1 1;
+    padding: 0 1;
+    background: $boost;
+}
+
+#waiting-spinner {
+    width: 2;
+    height: 1;
+    content-align: center middle;
+    color: $accent;
+    text-style: bold;
+}
+
+#prompt-label {
+    width: 3;
+    height: 1;
+    content-align: center middle;
+    color: $accent;
+}
+
+#input-box {
+    width: 1fr;
+    height: auto;
+    min-height: 1;
+    max-height: 8;
+    border: none;
+    padding: 0;
+    background: $boost;
+}
+
+#input-box:focus {
+    border: none;
+}
+
+Footer {
+    background: $primary-darken-1;
+}
+
+StatusBar {
+    height: 1;
+    content-align: left middle;
+    background: $primary-darken-2;
+    color: $text-muted;
+    padding: 0 1;
+}

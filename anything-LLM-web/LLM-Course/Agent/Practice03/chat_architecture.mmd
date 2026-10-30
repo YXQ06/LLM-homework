@@ -1,0 +1,133 @@
+%% chat.py 代码架构图（Mermaid 纯文本，可用 mermaid-cli / VS Code 插件渲染）
+%% 对应文件：F:\xie_teacher_documents\anything-LLM-web\LLM-Course\Agent\Practice03\chat.py
+flowchart TB
+    subgraph UI["交互层（UI）"]
+        U1["用户输入 prompt"]
+        U2["main()<br/>读取配置、维护多轮历史 messages"]
+        U3["print_typing()<br/>打字机效果输出最终回答"]
+        U4["退出：Ctrl+C / EOF"]
+    end
+
+    subgraph CFG["配置与系统提示词（Configuration）"]
+        C1["config.ini<br/>[llm] base_url / model / api_key"]
+        C2["load_config()"]
+        C3["SYSTEM_PROMPT<br/>工具清单 + 调用规则"]
+        C4["TOOLS<br/>12 个工具的 JSON Schema（OpenAI function call）"]
+    end
+
+    subgraph ENGINE["对话引擎（Core Engine） - run_turn()"]
+        R1["ask_llm()<br/>POST /chat/completions<br/>stream=False, temperature=0.2"]
+        R2["normalize_tool_calls()"]
+        R3{"模型是否要求调用工具？"}
+        R4["读取原生 tool_calls（role=assistant.tool_calls）"]
+        R5["parse_text_tool_calls()<br/>全角符号归一化 + JSON 扫描（文本式兜底）"]
+        R6["_match_hint()<br/>TOOL_HINTS 关键词匹配"]
+        R7["_nudge_text()<br/>漏调工具时追问（仅一次，给出真实调用示例）"]
+        R8["参数修正链（recovery）"]
+        R9{"与上一轮调用完全相同？（原地打转检测）"}
+        R10["call_tool()<br/>按 TOOL_HANDLERS 分发"]
+        R11["结果回传<br/>原生调用 role=tool；文本调用 role=user（带说明）"]
+        R12{"轮次 < MAX_TOOL_ROUNDS（8）？"}
+        R13["fallback_answer()<br/>用最后一次工具结果兜底"]
+        R14["extract_content()<br/>content / reasoning_content"]
+    end
+
+    subgraph RECOVERY["参数容错层（Recovery）"]
+        F1["_normalize_arguments()<br/>同义参数名归一化（filename/file_path/directory等）"]
+        F2["_infer_path_argument()<br/>用问题文件名 / 本轮上次成功路径补齐 path"]
+        F3["_repair_file_path_call()<br/>path 指向目录时按唯一文件名修正"]
+        F4["_repair_nonexistent_file_path()<br/>编造路径按问题给出的真实目录修正"]
+    end
+
+    subgraph TOOLS["工具层（Tools） - TOOL_HANDLERS"]
+        direction TB
+        H0["TOOL_HANDLERS 分发表"]
+        subgraph SYS["系统工具（System）"]
+            T1["getDate()<br/>subprocess 调用 date / time"]
+            T2["isLeapYear(year)<br/>闰年判断（Python）"]
+        end
+        subgraph DIRS["目录工具（Directory）"]
+            T3["getCurrentDirectory()<br/>os.getcwd()"]
+            T4["listDirectory(path, show_hidden)<br/>os.scandir()，最多 MAX_LIST_ENTRIES"]
+            T5["createDirectory(path)<br/>os.makedirs()（支持多级）"]
+            T6["deleteDirectory(path)<br/>shutil.rmtree()（递归删除，非空目录）"]
+        end
+        subgraph FILES["文件工具（File）"]
+            T7["getFileType(path)<br/>mimetypes + 扩展名表 + 内容探测"]
+            T8["readTextFile(path)<br/>二进制探测 + UTF-8/GBK/UTF-16，最多 MAX_READ_BYTES"]
+            T9["createFile(directory, filename, content)<br/>自动建目录，已存在则拒绝"]
+            T10["editFile(path, content, mode, old_text, new_text)<br/>overwrite / append / replace"]
+            T11["deleteFile(path)<br/>只删文件，不删目录"]
+            T12["renamePath(path, new_name)<br/>重命名或移动到新路径"]
+        end
+    end
+
+    subgraph UTIL["工具函数层（Utils）"]
+        X1["_resolve_path()<br/>相对路径 → 绝对路径（Windows /test.md 兼容处理）"]
+        X2["_looks_binary()<br/>BOM / NUL / 控制字符比例检测"]
+        X3["_decode_text()<br/>按 BOM/UTF-8/GBK/UTF-16 解码（strict 控制）"]
+        X4["_arg_text()<br/>参数类型校验与必填检查"]
+        X5["_clip_result() / _preview()<br/>限制回传与控制台长度"]
+        X6["_human_size()<br/>文件大小格式化（B/KB/MB/...）"]
+        X7["_prompt_filenames() / _prompt_directories()<br/>从问题提取文件名/绝对目录用于修正"]
+    end
+
+    subgraph OUTPUT["输出层（Output）"]
+        O1["控制台：工具调用、参数修正、工具结果预览"]
+        O2["最终回答（仅依据工具返回的真实结果）"]
+    end
+
+    U1 --> U2
+    U2 --> R1
+    C1 --> C2 --> U2
+    C3 --> U2
+    C4 --> R1
+
+    R1 --> R2
+    R2 --> R3
+    R3 -->|"否（无工具调用）"| R6
+    R6 -->|"命中关键词且未追问"| R7 --> R1
+    R6 -->|"无需工具"| R14 --> O2
+    R3 -->|"是（有工具调用）"| R4
+    R3 -->|"是（文本式）"| R5
+    R4 --> R8
+    R5 --> R8
+    R8 --> F1 --> F2 --> F3 --> F4 --> R9
+
+    R9 -->|"是（重复调用）"| R13 --> O2
+    R9 -->|"否"| R10 --> H0
+    H0 --> T1
+    H0 --> T2
+    H0 --> T3
+    H0 --> T4
+    H0 --> T5
+    H0 --> T6
+    H0 --> T7
+    H0 --> T8
+    H0 --> T9
+    H0 --> T10
+    H0 --> T11
+    H0 --> T12
+
+    T7 -.-> X2
+    T8 -.-> X2
+    T8 -.-> X3
+    T10 -.-> X2
+    T10 -.-> X3
+    T9 -.-> X1
+    T11 -.-> X1
+    T12 -.-> X1
+    T4 -.-> X6
+    T8 -.-> X5
+    T10 -.-> X5
+    R10 -.-> X7
+
+    R10 --> O1
+    R11 --> O1
+    R10 --> R11
+    R11 --> R12
+    R12 -->|"是"| R1
+    R12 -->|"否"| R13
+    O2 --> U3
+    U3 --> U1
+    U1 --> U4
