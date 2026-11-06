@@ -16,3 +16,6 @@ __pycache__/
 
 # 已从仓库移除，仅本地保留
 Agent/Practice01/test_api.py
+
+# xAgent 本地配置（含 api_key 密钥，仅本地保留）
+Agent/xAgent/config.json

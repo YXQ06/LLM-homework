@@ -1,0 +1,42 @@
+{
+  "mcpServers": {
+    "Bazi": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "bazi-mcp"],
+      "timeout": 120,
+      "connect_timeout": 120
+    },
+    "Bazi-MCP": {
+      "type": "streamable_http",
+      "url": "http://127.0.0.1:8092/mcp",
+      "timeout": 120,
+      "connect_timeout": 60,
+      "description": "本地 Streamable HTTP Bazi MCP（8092），由 autoStart 自动拉起；与本地 Bazi 提供相同工具。"
+    },
+    "PetHospitalMCP": {
+      "type": "streamable_http",
+      "url": "http://127.0.0.1:8090/mcp",
+      "timeout": 60,
+      "connect_timeout": 10
+    },
+    "AnythingLLMMCP": {
+      "type": "streamable_http",
+      "url": "http://127.0.0.1:8091/mcp",
+      "timeout": 60,
+      "connect_timeout": 10
+    }
+  },
+  "autoStart": {
+    "command": "powershell",
+    "args": [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      "start_mcp_servers.ps1"
+    ],
+    "cwd": ".",
+    "timeout": 180
+  }
+}
