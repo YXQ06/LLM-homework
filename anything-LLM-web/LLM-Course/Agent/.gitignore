@@ -1,0 +1,8 @@
+# 本地运行配置（可能包含真实 API Key，不要提交）
+config.ini
+
+# xAgent 运行产物
+.agents/sessions/
+.agents/context/
+logs/
+__pycache__/

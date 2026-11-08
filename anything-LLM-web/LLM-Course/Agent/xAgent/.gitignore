@@ -1,2 +1,6 @@
 config.ini
 __pycache__/
+logs/
+.tools/
+.agents/context/
+.agents/sessions/
