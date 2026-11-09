@@ -2,84 +2,244 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>上传文档到 AnythingLLM</title>
 <style>
-  body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 720px; margin: 40px auto; padding: 0 16px; }
-  input, button, select { font-size: 14px; margin: 4px 0; }
-  #box { border: 1px dashed #bbb; border-radius: 8px; padding: 24px; background: #fafafa; }
+  body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 760px; margin: 32px auto 64px; padding: 0 16px; color: #1f2328; }
+  h2 { margin: 0 0 4px; }
+  .sub { color: #656d76; font-size: 13px; margin: 0 0 20px; }
+  .card { border: 1px solid #d0d7de; border-radius: 8px; padding: 16px 18px; margin-bottom: 16px; background: #fff; }
+  .card h3 { margin: 0 0 12px; font-size: 15px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+  .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: #424a53; }
+  input, button, select { font-size: 14px; font-family: inherit; }
+  input[type="text"], input[type="password"], input[type="number"], select {
+    padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; min-width: 160px;
+  }
+  button { padding: 7px 16px; cursor: pointer; border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; }
+  button:hover:not(:disabled) { background: #eaeef2; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+  button.primary:hover:not(:disabled) { background: #1a5fd0; }
+  button:disabled { opacity: .55; cursor: not-allowed; }
+  .hint { color: #656d76; font-size: 12px; margin: 8px 0 0; line-height: 1.6; }
+  #box { border: 1px dashed #bbb; border-radius: 8px; padding: 16px; background: #fafafa; }
   progress { width: 100%; height: 18px; }
+  #stat { font-size: 13px; color: #424a53; min-height: 18px; }
   #log { background: #111; color: #0f0; font-family: Consolas, monospace; font-size: 12px;
          padding: 10px; height: 300px; overflow: auto; white-space: pre-wrap; border-radius: 6px; }
-  button { padding: 6px 16px; cursor: pointer; }
+  .ok { color: #1a7f37; } .err { color: #cf222e; } .warn { color: #9a6700; }
 </style>
 </head>
 <body>
-<h2>上传文档到 AnythingLLM 第一个工作区</h2>
-<div id="box">
-  <input type="file" id="file" multiple>
-  <div>
-    <label>切片长度 <input type="number" id="chunkSize" value="1000" style="width:80px"></label>
-    <label>重叠 <input type="number" id="chunkOverlap" value="20" style="width:80px"></label>
-    <label>切分符 <input type="text" id="splitOn" value="n" style="width:40px"></label>
+
+<h2>上传文档到 AnythingLLM</h2>
+<p class="sub">多文件上传 → 自动切片 → 加入工作区向量化。密钥只保存在本机浏览器，不写入代码。</p>
+
+<section class="card">
+  <h3>1. 连接配置</h3>
+  <div class="row">
+    <label class="field">服务地址
+      <input type="text" id="baseUrl" placeholder="http://localhost:3001">
+    </label>
+    <label class="field">API Key
+      <input type="password" id="apiKey" placeholder="AnythingLLM → 设置 → API Keys">
+    </label>
   </div>
-  <button id="btn" disabled>开始上传并向量化</button>
-  <progress id="bar" value="0" max="100"></progress>
-  <p id="stat"></p>
-</div>
-<h4>日志</h4>
+  <div class="row" style="margin-top:12px">
+    <label class="field">工作区
+      <select id="ws"><option value="">（填好地址与 Key 后点“刷新”获取）</option></select>
+    </label>
+    <button id="btnRefresh">刷新工作区</button>
+    <button id="btnSave">保存到本机浏览器</button>
+  </div>
+  <p class="hint">
+    Key 保存在 <code>localStorage</code>，仅当前浏览器可见，不会随页面源码提交到仓库。<br>
+    首次使用：先填地址 + Key → 点“刷新工作区” → 选中目标工作区 → 再上传。
+  </p>
+</section>
+
+<section class="card">
+  <h3>2. 选择文件并上传</h3>
+  <div id="box">
+    <input type="file" id="file" multiple>
+    <div class="row" style="margin-top:10px">
+      <label class="field">切片长度
+        <input type="number" id="chunkSize" value="1000" min="100" style="min-width:100px">
+      </label>
+      <label class="field">重叠
+        <input type="number" id="chunkOverlap" value="20" min="0" style="min-width:90px">
+      </label>
+      <label class="field">切分符
+        <input type="text" id="splitOn" value="\n" style="min-width:80px">
+      </label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="btn" class="primary" disabled>开始上传并向量化</button>
+    </div>
+    <progress id="bar" value="0" max="100"></progress>
+    <p id="stat"></p>
+    <p class="hint">切分符支持 <code>\n</code>（换行）、<code>。</code> 等；未填时按换行切分。</p>
+  </div>
+</section>
+
+<h3 style="font-size:15px">日志</h3>
 <div id="log"></div>
 
 <script>
-const API = 'http://localhost:3001/api/v1/document/upload';
-const KEY = '2QV8DFB-ZF84QYP-NM96ZJQ-4C01N98';
-const SLUG = 'e336cfd9-7013-4a1d-9ccc-d4edd2aee4ea';
+'use strict';
+
+const STORE_KEY = 'anythingllm.uploader.settings';
+const DEFAULT_BASE = 'http://localhost:3001';
 
 const $ = id => document.getElementById(id);
-const log = (m, c) => {
+const log = (msg, cls) => {
   const t = new Date().toLocaleTimeString();
-  $('log').innerHTML += `<span style="color:#666">${t}</span> <span style="color:${c||'#0f0'}">${m}</span>\n`;
+  const color = cls === 'err' ? '#f44' : cls === 'warn' ? '#ff0' : '#0f0';
+  $('log').innerHTML += `<span style="color:#666">${t}</span> <span style="color:${color}">${msg}</span>\n`;
   $('log').scrollTop = $('log').scrollHeight;
 };
 
-$('file').onchange = e => { $('btn').disabled = !e.target.files.length; };
+/* ---------------- 配置读写 ---------------- */
 
-$('btn').onclick = () => {
+function readSettings() {
+  return {
+    baseUrl: ($('baseUrl').value || DEFAULT_BASE).trim().replace(/\/+$/, ''),
+    apiKey: $('apiKey').value.trim(),
+    slug: $('ws').value
+  };
+}
+
+function saveSettings() {
+  const s = readSettings();
+  localStorage.setItem(STORE_KEY, JSON.stringify(s));
+  log('配置已保存到本机浏览器（不含服务端）', 'warn');
+}
+
+function restoreSettings() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch (e) { s = {}; }
+  $('baseUrl').value = s.baseUrl || DEFAULT_BASE;
+  $('apiKey').value = s.apiKey || '';
+  if (s.slug) {
+    const opt = document.createElement('option');
+    opt.value = s.slug;
+    opt.textContent = s.slug;
+    $('ws').appendChild(opt);
+    $('ws').value = s.slug;
+  }
+}
+
+function apiUrl(path) {
+  return `${readSettings().baseUrl}/api/v1${path}`;
+}
+
+async function apiFetch(path, options) {
+  const { apiKey } = readSettings();
+  const headers = Object.assign({ Authorization: `Bearer ${apiKey}` }, (options && options.headers) || {});
+  const res = await fetch(apiUrl(path), Object.assign({}, options, { headers }));
+  if (res.status === 401) throw new Error('401：API Key 无效或已删除，请到 AnythingLLM → 设置 → API Keys 重新创建');
+  if (res.status === 403) throw new Error('403：Key 权限不足，或服务端未开启跨域（CORS）');
+  return res;
+}
+
+/* ---------------- 工作区 ---------------- */
+
+async function refreshWorkspaces() {
+  const { apiKey } = readSettings();
+  if (!apiKey) { log('请先填写 API Key', 'err'); return; }
+
+  $('btnRefresh').disabled = true;
+  try {
+    const res = await apiFetch('/workspaces');
+    if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+    const data = await res.json();
+    const list = data.workspaces || [];
+    const sel = $('ws');
+    const current = sel.value;
+    sel.innerHTML = '';
+    if (!list.length) {
+      sel.innerHTML = '<option value="">（AnythingLLM 中还没有工作区）</option>';
+      log('连接成功，但没有任何工作区', 'warn');
+      return;
+    }
+    for (const ws of list) {
+      const opt = document.createElement('option');
+      opt.value = ws.slug;
+      opt.textContent = `${ws.name}（${ws.slug}）`;
+      sel.appendChild(opt);
+    }
+    if (current && list.some(w => w.slug === current)) sel.value = current;
+    log(`已加载 ${list.length} 个工作区`, 'warn');
+  } catch (e) {
+    log(`刷新工作区失败：${e.message}`, 'err');
+  } finally {
+    $('btnRefresh').disabled = false;
+  }
+}
+
+/* ---------------- 上传 ---------------- */
+
+function normalizeSplitOn(raw) {
+  if (!raw) return '\n';
+  return raw.replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+}
+
+function setBusy(busy) {
+  $('btn').disabled = busy || !$('file').files.length;
+  $('file').disabled = busy;
+  $('btnRefresh').disabled = busy;
+  $('ws').disabled = busy;
+  $('btn').textContent = busy ? '正在上传…' : '开始上传并向量化';
+}
+
+$('file').onchange = () => { $('btn').disabled = !$('file').files.length; };
+$('btnSave').onclick = saveSettings;
+$('btnRefresh').onclick = refreshWorkspaces;
+
+$('btn').onclick = async () => {
   const files = [...$('file').files];
+  if (!files.length) return;
+
+  const s = readSettings();
+  if (!s.apiKey) { log('请先填写 API Key', 'err'); return; }
+  if (!s.slug) { log('请先刷新并选择工作区', 'err'); return; }
+
   const options = {
     chunkSize: +$('chunkSize').value || 1000,
-    chunkOverlap: +$('chunkOverlap').value || 20,
-    splitOn: $('splitOn').value || 'n',
-    addToWorkspaces: [SLUG]
+    chunkOverlap: +$('chunkOverlap').value || 0,
+    splitOn: normalizeSplitOn($('splitOn').value),
+    addToWorkspaces: [s.slug]
   };
 
+  setBusy(true);
+  $('bar').value = 0;
   let done = 0, ok = 0, failed = 0;
-  (async () => {
-    for (const f of files) {
-      const fd = new FormData();
-      fd.append('document', f, f.name);
-      fd.append('options', JSON.stringify(options));
-      try {
-        const res = await fetch(`${API}?slug=${encodeURIComponent(SLUG)}`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${KEY}` },
-          body: fd
-        });
-        const text = await res.text();
-        if (!res.ok) throw new Error(res.status + ' ' + text);
-        ok++;
-        log(`✅ ${f.name} -> ${text}`, '#0f0');
-      } catch (e) {
-        failed++;
-        log(`❌ ${f.name} -> ${e.message}`, '#f44');
-      }
-      done++;
-      $('bar').value = done / files.length * 100;
-      $('stat').textContent = `进度 ${done}/${files.length}　成功 ${ok}　失败 ${failed}`;
+
+  for (const f of files) {
+    const fd = new FormData();
+    fd.append('file', f, f.name);
+    fd.append('options', JSON.stringify(options));
+    try {
+      const res = await apiFetch(`/document/upload?slug=${encodeURIComponent(s.slug)}`, { method: 'POST', body: fd });
+      const text = await res.text();
+      if (!res.ok) throw new Error(`${res.status} ${text}`);
+      ok++;
+      log(`✅ ${f.name} → ${text}`, 'ok');
+    } catch (e) {
+      failed++;
+      log(`❌ ${f.name} → ${e.message}`, 'err');
     }
-    log(`完成：成功 ${ok}，失败 ${failed}`, '#ff0');
-    $('btn').disabled = false;
-  })();
+    done++;
+    $('bar').value = done / files.length * 100;
+    $('stat').textContent = `进度 ${done}/${files.length}　成功 ${ok}　失败 ${failed}`;
+  }
+
+  log(`完成：成功 ${ok}，失败 ${failed}`, failed ? 'warn' : 'ok');
+  setBusy(false);
+  $('stat').textContent += failed ? '　（失败项请查看日志）' : '　（已加入工作区并开始向量化）';
 };
+
+restoreSettings();
 </script>
 </body>
 </html>
