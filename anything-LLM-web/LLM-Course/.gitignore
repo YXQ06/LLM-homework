@@ -19,6 +19,10 @@ __pycache__/
 *.log
 logs/
 
+# IDE 本地工程文件（含本机路径）
+.idea/
+.vscode/
+
 # 已从仓库移除，仅本地保留
 Agent/Practice01/test_api.py
 
