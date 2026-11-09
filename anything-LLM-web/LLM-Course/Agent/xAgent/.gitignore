@@ -1,6 +1,9 @@
 config.ini
+.env
 __pycache__/
 logs/
 .tools/
 .agents/context/
 .agents/sessions/
+.agents/sandbox/
+.agents/outputs/
