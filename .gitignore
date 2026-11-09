@@ -2,9 +2,6 @@
 # 说明：具体的密钥 / 缓存规则在下层 anything-LLM-web/LLM-Course/.gitignore 中，
 # 这里只补仓库级、与具体子项目无关的条目。
 
-# 初始整包上传时遗留的临时目录（本地无对应内容，已从仓库移除，防止误加回）
-anything-LLM-web/tools_skills/
-
 # 系统与编辑器杂项
 .DS_Store
 Thumbs.db
