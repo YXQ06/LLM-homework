@@ -56,6 +56,46 @@ class NudgeIssued:
 
 
 @dataclass(frozen=True)
+class ContextUsage:
+    """上下文使用量更新（用于 TUI 状态条和压缩警告）。"""
+
+    used_tokens: int
+    window_tokens: int
+    percent: float
+    window_is_default: bool = False
+    warning: str = ""
+
+
+@dataclass(frozen=True)
+class CompactionStarted:
+    """开始执行 /compact：原始上下文即将归档并交给 LLM 生成摘要。"""
+
+    archive_id: str
+    message_count: int
+    original_text: str = ""
+
+
+@dataclass(frozen=True)
+class CompactionFinished:
+    """上下文压缩成功，历史消息已被摘要替换。"""
+
+    archive_id: str
+    archive_path: str
+    created_at: str
+    summary: str
+    original_text: str = ""
+    compacted_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class CompactionFailed:
+    """上下文压缩失败，原有上下文保持不变。"""
+
+    message: str
+    archive_id: str = ""
+
+
+@dataclass(frozen=True)
 class AnswerReady:
     """最终回答生成完毕。"""
 
@@ -105,6 +145,10 @@ AgentEvent = Union[
     ToolCallFinished,
     ArgumentRepaired,
     NudgeIssued,
+    ContextUsage,
+    CompactionStarted,
+    CompactionFinished,
+    CompactionFailed,
     AnswerReady,
     TurnFailed,
     TurnFinished,
@@ -119,6 +163,10 @@ __all__ = [
     "AgentEvent",
     "AnswerReady",
     "ArgumentRepaired",
+    "CompactionFailed",
+    "CompactionFinished",
+    "CompactionStarted",
+    "ContextUsage",
     "NudgeIssued",
     "ToolCallFinished",
     "ToolCallStarted",

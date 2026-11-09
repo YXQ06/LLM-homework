@@ -2,3 +2,5 @@
 requests>=2.31
 textual>=8.2.8
 trafilatura>=2.0
+# MCP Python SDK（支持 1.x / 2.x，优先使用 2.x）
+mcp>=1.9

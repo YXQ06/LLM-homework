@@ -33,7 +33,7 @@ class ConfigCreatedScreen(ModalScreen[None]):
             )
             yield Static(
                 f"配置文件：{_escape_markup(self._config_path)}\n\n"
-                "请修改 [llm] 下的 base_url、model、api_key，然后重新启动 xAgent。"
+                "请修改 \\[llm] 下的 base_url、model、api_key，然后重新启动 xAgent。"
                 "在完成修改前，模型请求不会正常工作。",
                 id="config-path",
             )

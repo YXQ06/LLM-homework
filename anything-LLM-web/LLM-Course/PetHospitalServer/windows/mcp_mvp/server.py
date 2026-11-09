@@ -3,6 +3,8 @@
 封装宠物医院 REST API 为 MCP Tools，供其他 Agent MCP Client 消费
 """
 
+import os
+
 import httpx
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
@@ -10,8 +12,14 @@ from mcp.types import ToolAnnotations
 # 创建 MCP Server
 mcp = MCPServer("pet-hospital-mcp")
 
+# 监听地址（与 AnythingLLM MCP Server 保持一致，可通过环境变量覆盖）
+MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
+MCP_PORT = int(os.getenv("MCP_PORT", "8000"))
+
 # REST API 配置
-REST_API_BASE = "http://127.0.0.1:8080"
+REST_API_BASE = os.getenv(
+    "PET_HOSPITAL_API_BASE", "http://127.0.0.1:8080"
+).rstrip("/")
 
 # 合法枚举值（用于输入校验）
 VALID_SPECIES = {"犬", "猫", "兔", "仓鼠", "鹦鹉", "龟", "马"}
@@ -782,7 +790,7 @@ if __name__ == "__main__":
     print("宠物医院 MCP Server 启动中...")
     print(f"代理 REST API: {REST_API_BASE}")
     print("传输方式: Streamable HTTP")
-    print("监听地址: http://localhost:8000/mcp")
+    print(f"监听地址: http://{MCP_HOST}:{MCP_PORT}/mcp")
     print("\n按 Ctrl+C 停止服务\n")
 
-    mcp.run(transport="streamable-http")
+    mcp.run(transport="streamable-http", host=MCP_HOST, port=MCP_PORT)

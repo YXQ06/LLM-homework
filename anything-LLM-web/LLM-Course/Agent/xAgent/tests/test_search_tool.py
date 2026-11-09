@@ -12,7 +12,7 @@ import requests
 
 from xAgent.core.config import AgentConfig, SearchConfig, load_config
 from xAgent.core.errors import ToolError
-from xAgent.core.tools.search import SearchToolbox
+from xAgent.core.tools.search import SearchToolbox, mask_secret, normalize_secret
 
 SUCCESS_PAYLOAD = {
     "references": [
@@ -193,6 +193,60 @@ class SearchToolTest(unittest.TestCase):
         ):
             result = self.toolbox.search_web({"query": "test"})
         self.assertIn("Python 3.13 新特性", result)
+
+
+class SearchSecretTest(unittest.TestCase):
+    def test_normalize_secret_removes_paste_artifacts(self) -> None:
+        raw = '\ufeff  "Bearer bce-v3/ALTAK-abc/def"\r\n'
+        self.assertEqual(normalize_secret(raw), "bce-v3/ALTAK-abc/def")
+        self.assertEqual(
+            normalize_secret("bce-v3/ALTAK-a\u200bb/def\n"),
+            "bce-v3/ALTAK-ab/def",
+        )
+
+    def test_normalized_key_is_used_in_authorization_header(self) -> None:
+        toolbox = SearchToolbox(
+            AgentConfig(),
+            SearchConfig(api_key=' \ufeff"Bearer test-key"\r\n', timeout=7),
+        )
+        response = FakeResponse(payload={"references": []})
+        with patch(
+            "xAgent.core.tools.search.requests.post", return_value=response
+        ) as post:
+            toolbox.search_web({"query": "test"})
+        _, kwargs = post.call_args
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-key")
+
+    def test_placeholder_key_never_calls_api(self) -> None:
+        toolbox = SearchToolbox(
+            AgentConfig(), SearchConfig(api_key="mock-search-key")
+        )
+        with patch("xAgent.core.tools.search.requests.post") as post:
+            with self.assertRaises(ToolError) as ctx:
+                toolbox.search_web({"query": "test"})
+        post.assert_not_called()
+        self.assertIn("占位符", str(ctx.exception))
+
+    def test_auth_error_is_not_retried(self) -> None:
+        response = FakeResponse(
+            status_code=401,
+            payload={"code": 216003, "message": "invalid key"},
+        )
+        toolbox = SearchToolbox(
+            AgentConfig(), SearchConfig(api_key="test-key", timeout=7)
+        )
+        with patch(
+            "xAgent.core.tools.search.requests.post", return_value=response
+        ) as post:
+            with self.assertRaises(ToolError) as ctx:
+                toolbox.search_web({"query": "test"})
+        self.assertEqual(post.call_count, 1)
+        message = str(ctx.exception)
+        self.assertIn("HTTP 401", message)
+        self.assertIn("216003", message)
+        self.assertIn("已停止重试", message)
+        self.assertNotIn("test-key", message)
+        self.assertIn(mask_secret("test-key"), message)
 
 
 class SearchConfigTest(unittest.TestCase):

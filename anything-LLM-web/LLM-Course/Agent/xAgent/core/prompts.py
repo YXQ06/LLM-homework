@@ -6,8 +6,10 @@
 
 from __future__ import annotations
 
-from .tools.base import ToolRegistry, ToolSpec
+from typing import Iterable
 
+from .skills import Skill, SkillRegistry, build_skills_prompt
+from .tools.base import ToolRegistry, ToolSpec
 
 def _format_tool(spec: ToolSpec, index: int) -> str:
     if not spec.parameter_names:
@@ -20,14 +22,17 @@ def _format_tool(spec: ToolSpec, index: int) -> str:
     return f"{index}. {spec.name}（{parameter_text}）：{spec.description}；"
 
 
-def build_system_prompt(registry: ToolRegistry) -> str:
-    """根据已注册工具生成内置系统提示词。"""
+def build_system_prompt(
+    registry: ToolRegistry,
+    skills: SkillRegistry | Iterable[Skill] | None = None,
+) -> str:
+    """根据已注册工具与 Skill 生成内置系统提示词。"""
     tool_lines = "\n".join(
         _format_tool(spec, index)
         for index, spec in enumerate(registry, start=1)
     )
-    return (
-        "你是本地文件管理、网页内容、搜索与命令行助手。请严格根据工具返回的真实结果回答，"
+    prompt = (
+        "你是本地文件管理、网页内容、搜索、命令行与 MCP 工具助手。请严格根据工具返回的真实结果回答，"
         "不要编造目录内容、文件内容、网页内容、搜索结果、命令输出或操作结果。\n"
         "当前可用工具：\n"
         f"{tool_lines}\n"
@@ -45,5 +50,12 @@ def build_system_prompt(registry: ToolRegistry) -> str:
         "5. 否则只输出一行 JSON 来调用工具，例如 "
         '{"name": "listDirectory", "arguments": {"path": "."}}，'
         "该行之外不要输出任何其他文字，也不要用 Markdown 代码块包裹；\n"
-        "6. 收到工具结果后，用中文简洁回答用户，严禁改写、猜测或编造工具结果。"
+        "6. 收到工具结果后，用中文简洁回答用户，严禁改写、猜测或编造工具结果；\n"
+        "7. 上下文被压缩后，如果摘要缺少历史细节，可以调用 recallContext 检索归档"
+        "（text 必填，id 可选），仍然严禁编造历史内容。"
     )
+
+    skills_prompt = build_skills_prompt(skills)
+    if skills_prompt:
+        prompt = prompt + "\n\n" + skills_prompt
+    return prompt

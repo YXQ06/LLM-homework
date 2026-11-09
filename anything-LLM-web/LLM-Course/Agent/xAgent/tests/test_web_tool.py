@@ -34,6 +34,11 @@ SAMPLE_HTML = b"""<!doctype html>
 </html>
 """
 
+CAPTCHA_HTML = b"""<!doctype html>
+<html><head><title>Baidu Security Verification</title></head>
+<body><script>window.BIOC_OPTIONS={};</script>seccaptcha</body></html>
+"""
+
 
 def completed(stdout: bytes = b"", stderr: bytes = b"", code: int = 0) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(
@@ -167,6 +172,71 @@ class WebToolTest(unittest.TestCase):
         with self.assertRaises(ToolError) as ctx:
             self.toolbox._extract_markdown(html, "https://example.com")
         self.assertIn("正文提取失败", str(ctx.exception))
+
+    def test_browser_like_headers_are_sent(self) -> None:
+        url = "https://baike.baidu.com/item/%E6%B0%B4%E7%A8%BB"
+        with (
+            patch(
+                "xAgent.core.tools.web.shutil.which", return_value="curl.exe"
+            ),
+            patch(
+                "xAgent.core.tools.web.subprocess.run",
+                return_value=completed(stdout=SAMPLE_HTML),
+            ) as run,
+        ):
+            self.toolbox.fetch_web({"url": url})
+
+        command = run.call_args.args[0]
+        joined = " ".join(command)
+        self.assertIn("--user-agent", command)
+        self.assertIn("Chrome/131", joined)
+        self.assertNotIn("xAgent/1.0", joined)
+        self.assertIn("sec-ch-ua", joined)
+        self.assertIn("Accept-Language: zh-CN", joined)
+        self.assertIn("Referer: https://www.baidu.com/", joined)
+        self.assertIn("--cookie-jar", command)
+
+    def test_antibot_403_is_reported_and_not_retried(self) -> None:
+        with (
+            patch(
+                "xAgent.core.tools.web.shutil.which", return_value="curl.exe"
+            ),
+            patch(
+                "xAgent.core.tools.web.subprocess.run",
+                return_value=completed(stdout=CAPTCHA_HTML),
+            ) as run,
+            patch(
+                "xAgent.core.tools.web._read_http_status", return_value=403
+            ),
+        ):
+            with self.assertRaises(ToolError) as ctx:
+                self.toolbox.fetch_web(
+                    {"url": "https://baike.baidu.com/item/%E6%B0%B4%E7%A8%BB"}
+                )
+
+        run.assert_called_once()
+        message = str(ctx.exception)
+        self.assertIn("反爬", message)
+        self.assertIn("searchWeb", message)
+
+    def test_transient_5xx_is_retried_once(self) -> None:
+        with (
+            patch(
+                "xAgent.core.tools.web.shutil.which", return_value="curl.exe"
+            ),
+            patch(
+                "xAgent.core.tools.web.subprocess.run",
+                return_value=completed(stdout=SAMPLE_HTML),
+            ) as run,
+            patch(
+                "xAgent.core.tools.web._read_http_status",
+                side_effect=[503, 200],
+            ),
+        ):
+            result = self.toolbox.fetch_web({"url": "https://example.com/demo"})
+
+        self.assertEqual(run.call_count, 2)
+        self.assertIn("# Main Heading", result)
 
     def test_result_is_clipped_to_configured_limit(self) -> None:
         toolbox = WebToolbox(AgentConfig(max_tool_result_chars=100))

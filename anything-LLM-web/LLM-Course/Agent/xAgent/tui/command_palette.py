@@ -22,7 +22,12 @@ class CommandPalette(Static):
         self.selected = 0
 
     @property
-    def visible(self) -> bool:
+    def is_open(self) -> bool:
+        """面板当前是否展开。
+
+        不覆盖 Textual ``Widget.visible`` 属性，避免与框架自身的可见性
+        控制（``query.set(visible=...)`` 等）冲突。
+        """
         return self.has_class("visible")
 
     @property

@@ -231,5 +231,122 @@ class LoadSkillTest(SkillTestBase):
         self.assertIn("目录之外", str(context.exception))
 
 
+class CreateSkillTest(SkillTestBase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.registry = SkillRegistry(
+            root=self.skills_root, project_root=self.project
+        )
+
+    def test_creates_skill_and_generates_front_matter(self) -> None:
+        result = self.registry.create_skill(
+            {
+                "name": "My New Skill",
+                "skillContext": "# My New Skill\n\nDo something useful.",
+            }
+        )
+        target = self.skills_root / "my-new-skill" / "SKILL.md"
+        self.assertTrue(target.is_file())
+        text = target.read_text(encoding="utf-8")
+        self.assertTrue(text.startswith("---\n"))
+        self.assertIn("name: my-new-skill", text)
+        self.assertIn("description:", text)
+        self.assertIn("# My New Skill", text)
+        self.assertIn("已创建 Skill：my-new-skill", result)
+        self.assertIn("my-new-skill", self.registry.names)
+        self.assertEqual(
+            self.registry.get("my-new-skill").description, "My New Skill"
+        )
+        # 新建后可以立即通过 loadSkill 读取
+        self.assertIn(
+            "Do something useful.",
+            self.registry.load_skill({"name": "my-new-skill"}),
+        )
+
+    def test_keeps_provided_front_matter_and_forces_directory_name(self) -> None:
+        context = (
+            "---\n"
+            "name: Old Name\n"
+            "description: 已有描述\n"
+            'version: "1.0"\n'
+            "---\n\n"
+            "# 正文\n"
+            "步骤一。\n"
+        )
+        self.registry.create_skill(
+            {"name": "custom-skill", "skillContext": context}
+        )
+        text = (
+            self.skills_root / "custom-skill" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("name: custom-skill", text)
+        self.assertNotIn("name: Old Name", text)
+        self.assertIn("description: 已有描述", text)
+        self.assertIn('version: "1.0"', text)
+        self.assertIn("步骤一。", text)
+        self.assertEqual(
+            self.registry.get("custom-skill").description, "已有描述"
+        )
+
+    def test_existing_skill_is_never_overwritten(self) -> None:
+        original = (
+            self.skills_root / "alpha" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        with self.assertRaises(ToolError) as context:
+            self.registry.create_skill(
+                {"name": "alpha", "skillContext": "# Replaced\n"}
+            )
+        self.assertIn("已存在", str(context.exception))
+        self.assertIn("未做任何修改", str(context.exception))
+        self.assertEqual(
+            (self.skills_root / "alpha" / "SKILL.md").read_text(
+                encoding="utf-8"
+            ),
+            original,
+        )
+
+    def test_duplicate_create_returns_existing_message(self) -> None:
+        first = {"name": "repeat-skill", "skillContext": "# First\n"}
+        self.registry.create_skill(first)
+        with self.assertRaises(ToolError):
+            self.registry.create_skill(first)
+
+    def test_invalid_name_is_rejected(self) -> None:
+        with self.assertRaises(ToolError):
+            self.registry.create_skill(
+                {"name": "中文名称", "skillContext": "# 正文\n"}
+            )
+
+    def test_creates_default_agents_skills_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as other:
+            fresh = Path(other)
+            with patch.dict(os.environ, {"XAGENT_SKILLS_DIR": ""}):
+                registry = SkillRegistry(project_root=fresh)
+            self.assertIsNone(registry.root)
+            registry.create_skill(
+                {"name": "demo-skill", "skillContext": "# Demo\n\nBody.\n"}
+            )
+            expected = fresh / ".agents" / "skills" / "demo-skill" / "SKILL.md"
+            self.assertTrue(expected.is_file())
+            self.assertEqual(
+                registry.creation_root, fresh / ".agents" / "skills"
+            )
+
+    def test_agent_registers_create_skill_tool(self) -> None:
+        tools = build_default_registry(AgentConfig())
+        Agent(
+            object(),  # type: ignore[arg-type]
+            tools,
+            AgentConfig(),
+            project_root=str(self.project),
+        )
+        self.assertIn("createSkill", tools.names)
+        spec = tools.get("createSkill")
+        self.assertIsNotNone(spec)
+        self.assertEqual(
+            set(spec.required_parameters), {"name", "skillContext"}
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

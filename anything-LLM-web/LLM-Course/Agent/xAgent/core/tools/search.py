@@ -6,6 +6,8 @@ https://qianfan.baidubce.com/v2/ai_search/web_search 获取搜索结果。
 from __future__ import annotations
 
 import json
+import re
+import time
 from typing import Any, Mapping
 
 import requests
@@ -17,6 +19,84 @@ from .base import ToolSpec, object_schema, text_argument
 
 _DEFAULT_TOP_K = 5
 _MAX_TOP_K = 10
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 2
+_RETRY_DELAY_SECONDS = 1.0
+
+# 复制粘贴密钥时常见的不可见字符：BOM、零宽空格/连接符、不换行空格等。
+_INVISIBLE_CHARS = (
+    "\ufeff",
+    "\u200b",
+    "\u200c",
+    "\u200d",
+    "\u2060",
+    "\u00a0",
+)
+_WHITESPACE_RE = re.compile(r"\s+")
+_BEARER_PREFIX_RE = re.compile(r"^bearer\s+", re.IGNORECASE)
+_PLACEHOLDER_KEYS = frozenset(
+    {
+        "mock-search-key",
+        "mock_search_key",
+        "your_api_key",
+        "your-baidu-api-key",
+        "your_baidu_api_key",
+        "<your_api_key>",
+        "<api_key>",
+    }
+)
+
+
+def normalize_secret(value: str | None) -> str:
+    """清理密钥中的空白、换行、引号、Bearer 前缀和不可见字符。
+
+    典型问题：从控制台复制密钥时带入了尾随空格/换行、成对引号，
+    或整段 ``Bearer xxx`` 被再次拼进 Authorization 头，导致百度返回
+    216003（Fail to parse apikey authorization）。
+    """
+    if not value:
+        return ""
+    text = str(value)
+    for char in _INVISIBLE_CHARS:
+        text = text.replace(char, "")
+    text = text.strip()
+    # 去掉误复制进来的成对引号（可能有多层）。
+    while len(text) >= 2 and text[0] == text[-1] and text[0] in ("'", '"'):
+        text = text[1:-1].strip()
+    # 允许用户直接填写 "Bearer xxx"，避免拼成 "Bearer Bearer xxx"。
+    text = _BEARER_PREFIX_RE.sub("", text).strip()
+    # 密钥本身不允许包含空白；这里把中间误插入的换行也一并清掉。
+    text = _WHITESPACE_RE.sub("", text)
+    return text
+
+
+def mask_secret(value: str) -> str:
+    """日志/报错中只展示密钥首尾，避免泄露完整密钥。"""
+    if not value:
+        return "(空)"
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}...{value[-4:]}"
+
+
+def _is_auth_error(status_code: int, data: Any, text: str = "") -> bool:
+    """识别百度鉴权/授权类错误（401、216003、InvalidHTTPAuthHeader）。"""
+    if status_code in (401, 403):
+        return True
+    if isinstance(data, Mapping) and str(data.get("code")).strip() == "216003":
+        return True
+    haystack = text or ""
+    return "216003" in haystack or "InvalidHTTPAuthHeader" in haystack
+
+
+def _auth_error_hint(api_key: str) -> str:
+    return (
+        "请检查 config.ini 的 [search] baidu_qianfan_api_key："
+        "应填写完整的 bce-v3/ALTAK-... 密钥（不要填 mock-search-key 等占位符），"
+        "并确保没有多余空格、换行、引号或重复的 Bearer 前缀。"
+        f"当前密钥：{mask_secret(api_key)}。"
+        "已停止重试，修复配置后重启服务再试。"
+    )
 
 
 def _format_api_error(data: Any) -> str:
@@ -75,9 +155,16 @@ class SearchToolbox:
         if top_k < 1 or top_k > _MAX_TOP_K:
             raise ToolError(f"参数 top_k 范围为 1~{_MAX_TOP_K}")
 
-        api_key = (self.search_config.api_key or "").strip()
+        api_key = normalize_secret(self.search_config.api_key)
         if not api_key:
             raise ToolError("未配置百度千帆 API Key，请在 config.ini 的 [search] 段设置 baidu_qianfan_api_key")
+        if api_key.lower() in _PLACEHOLDER_KEYS:
+            raise ToolError(
+                f"检测到占位符 API Key（{mask_secret(api_key)}），"
+                "本次不会向百度发起请求。请在 config.ini 的 [search] 段"
+                "填写真实的 baidu_qianfan_api_key（bce-v3/ALTAK-...），"
+                "或切换到备选搜索源。"
+            )
 
         endpoint = (self.search_config.endpoint or "https://qianfan.baidubce.com/v2/ai_search/web_search").strip()
         timeout = max(1.0, float(self.search_config.timeout or 30.0))
@@ -87,21 +174,53 @@ class SearchToolbox:
             "search_source": "baidu_search_v2",
             "resource_type_filter": [{"type": "web", "top_k": top_k}],
         }
+        # Authorization 只拼接一次 Bearer；密钥已清理，不含引号/换行。
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
 
-        try:
-            resp = requests.post(
-                endpoint,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                json=body,
-                timeout=timeout,
-            )
-        except requests.exceptions.Timeout as exc:
-            raise ToolError(f"百度搜索请求超时（{timeout}s）") from exc
-        except requests.exceptions.RequestException as exc:
-            raise ToolError(f"百度搜索网络请求失败：{exc}") from exc
+        resp = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                resp = requests.post(
+                    endpoint,
+                    headers=headers,
+                    json=body,
+                    timeout=timeout,
+                )
+            except requests.exceptions.Timeout as exc:
+                raise ToolError(f"百度搜索请求超时（{timeout}s）") from exc
+            except requests.exceptions.RequestException as exc:
+                raise ToolError(f"百度搜索网络请求失败：{exc}") from exc
+
+            # 仅对限流/网关类瞬时错误做一次短退避重试；
+            # 401/216003 等鉴权错误绝不重试，避免继续使用错误密钥。
+            if resp.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS:
+                time.sleep(_RETRY_DELAY_SECONDS)
+                continue
+            break
+
+        if resp is None:  # pragma: no cover - 防御性分支
+            raise ToolError("百度搜索请求未返回响应")
 
         if resp.status_code >= 400:
-            raise ToolError(f"百度搜索 API 返回 HTTP {resp.status_code}：{resp.text[:500]}")
+            text = resp.text or ""
+            data = None
+            try:
+                data = resp.json()
+            except ValueError:
+                data = None
+            detail = f"HTTP {resp.status_code}"
+            api_error = _format_api_error(data)
+            if api_error:
+                detail = f"{detail}，{api_error}"
+            elif text:
+                detail = f"{detail}：{text[:300]}"
+            if _is_auth_error(resp.status_code, data, text):
+                raise ToolError(f"百度搜索鉴权失败（{detail}）。{_auth_error_hint(api_key)}")
+            raise ToolError(f"百度搜索 API 返回 {detail}")
 
         try:
             data = resp.json()
@@ -113,6 +232,8 @@ class SearchToolbox:
 
         api_error = _format_api_error(data)
         if api_error:
+            if _is_auth_error(0, data):
+                raise ToolError(f"百度搜索鉴权失败：{api_error}。{_auth_error_hint(api_key)}")
             raise ToolError(f"百度搜索 API 返回错误：{api_error}")
 
         refs = data.get("references")

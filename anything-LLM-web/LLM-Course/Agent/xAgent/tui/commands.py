@@ -107,9 +107,12 @@ def suggest_commands(text: str, limit: int = 8) -> list[SlashCommand]:
 
     只在“以 / 开头且尚未输入空格”时提供候选，避免命令参数也被当作命令名。
     """
-    stripped = (text or "").strip()
-    if not stripped.startswith("/") or any(
-        character.isspace() for character in stripped
+    raw = text or ""
+    stripped = raw.strip()
+    # 只要出现空格 / 换行，就认为用户开始输入命令参数，不再显示候选。
+    if (
+        not stripped.startswith("/")
+        or any(character.isspace() for character in raw)
     ):
         return []
 

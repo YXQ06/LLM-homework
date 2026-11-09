@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import time
+import threading
 import unittest
 
 from textual import events
@@ -13,6 +13,7 @@ from textual.containers import Horizontal
 
 from xAgent.tui.app import XAgentApp
 from xAgent.tui.chat_input import ChatTextArea, WaitingSpinner
+from xAgent.tui.compact_panel import CompactPreviewScreen
 from xAgent.tui.ime_compat import apply_textual_ime_fix
 
 
@@ -127,26 +128,54 @@ class ImeCompatTest(unittest.TestCase):
                 self.assertIn(expected, [event.key for event in keys])
 
 
-class SlowAgent:
+class CompactPanelTest(unittest.IsolatedAsyncioTestCase):
+    async def test_panel_shows_original_and_summary_and_can_close(self) -> None:
+        app = XAgentApp()
+        async with app.run_test() as pilot:
+            app.push_screen(
+                CompactPreviewScreen("压缩前原文内容", "压缩后摘要内容")
+            )
+            await pilot.pause()
+            self.assertIsInstance(app.screen, CompactPreviewScreen)
+            bodies = app.screen.query(".compact-body")
+            self.assertEqual(len(bodies), 2)
+            self.assertIn("压缩前原文内容", str(bodies[0].render()))
+            self.assertIn("压缩后摘要内容", str(bodies[1].render()))
+
+            await pilot.click("#compact-close")
+            await pilot.pause()
+            self.assertNotIsInstance(app.screen, CompactPreviewScreen)
+
+
+class BlockingAgent:
+    """send() 会一直阻塞，直到测试主动放行，避免时序竞争。"""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
     def send(self, prompt: str) -> list[object]:
-        time.sleep(0.3)
+        self.started.set()
+        self.release.wait(timeout=5.0)
         return []
 
 
 class SpinnerDuringTurnTest(unittest.IsolatedAsyncioTestCase):
     async def test_spinner_is_visible_while_waiting_for_model(self) -> None:
         app = XAgentApp()
-        app.agent = SlowAgent()  # type: ignore[assignment]
+        agent = BlockingAgent()
+        app.agent = agent  # type: ignore[assignment]
         async with app.run_test() as pilot:
             task = asyncio.create_task(app._handle_turn("测试问题"))
             try:
-                await pilot.pause(0.1)
+                await pilot.pause()
                 self.assertTrue(app.busy)
                 self.assertEqual(
                     str(app.spinner.styles.visibility), "visible"
                 )
                 self.assertTrue(app.chat_input.disabled)
 
+                agent.release.set()
                 await task
                 await pilot.pause()
                 self.assertFalse(app.busy)
@@ -155,6 +184,7 @@ class SpinnerDuringTurnTest(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertFalse(app.chat_input.disabled)
             finally:
+                agent.release.set()
                 if not task.done():
                     task.cancel()
 

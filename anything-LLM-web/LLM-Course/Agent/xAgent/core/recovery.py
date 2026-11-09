@@ -62,6 +62,13 @@ TOOL_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"https?://|网页|网站|网址|抓取|fetch\s", re.IGNORECASE), "fetchWeb"),
     (
         re.compile(
+            r"创建.*skill|新建.*skill|制作.*skill|写.*skill|增加.*skill|定义.*skill",
+            re.IGNORECASE,
+        ),
+        "createSkill",
+    ),
+    (
+        re.compile(
             r"搜索|查一下|找一下|最新|新闻|动态|行情|近况|谁是|是什么|百度|search",
             re.IGNORECASE,
         ),
