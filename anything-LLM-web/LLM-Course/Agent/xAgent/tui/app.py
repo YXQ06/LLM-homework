@@ -336,6 +336,13 @@ class XAgentApp(App[None]):
             f"工具数：{len(self.registry)}（本地工具 + MCP 工具），"
             "支持多轮对话和自动参数修正。"
         )
+        agent_rules = getattr(self.agent, "agent_rules", None)
+        if agent_rules is not None:
+            truncated = "（已截断）" if agent_rules.truncated else ""
+            self.chat_log.system(
+                f"已加载长期规则 AGENT.md{truncated}：{agent_rules.path}"
+                f"（{len(agent_rules.text)} 字符），已放在系统提示词最前端。"
+            )
         for message in self._mcp_startup_messages:
             self.chat_log.system(message)
         self.chat_log.system(

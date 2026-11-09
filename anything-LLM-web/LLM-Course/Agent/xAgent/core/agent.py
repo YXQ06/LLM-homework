@@ -18,6 +18,11 @@ from .agents_md import (
     contains_agents_md,
     load_agents_md,
 )
+from .agent_rules import (
+    AgentRulesDocument,
+    build_agent_rules_prompt,
+    load_agent_rules,
+)
 from .config import AgentConfig
 from .context import (
     ContextManager,
@@ -105,11 +110,56 @@ class Agent:
             self.system_prompt = build_system_prompt(registry, self.skills)
         self.messages: list[dict] = [{"role": "system", "content": self.system_prompt}]
 
+        # AGENT.md（单数）是智能体长期固定规则：启动时读取一次，追加到
+        # System Prompt 最前端；文件不存在时保持原提示词，不报错。
+        self.agent_rules: AgentRulesDocument | None = None
+        self.agent_rules_path = ""
+        self.agent_rules_hash = ""
+        self._agent_rules_prefix = ""
+        self.reload_agent_rules(
+            Path(self.project_root) / config.agent_md_filename,
+            max_chars=config.agent_md_max_chars,
+        )
+
         # AGENTS.md 采用“一次注入，全程复用”：保留注入消息，压缩时也保留。
         self.agents_md_injected = False
         self.agents_md_path = ""
         self.agents_md_hash = ""
         self._agents_md_message: dict | None = None
+
+    # ------------------------------------------------------------- AGENT.md
+
+    def _with_agent_rules(self, prompt: str) -> str:
+        """把 AGENT.md 规则块拼接到提示词最前端。"""
+        if not self._agent_rules_prefix:
+            return prompt
+        return self._agent_rules_prefix + "\n\n" + prompt.lstrip()
+
+    def reload_agent_rules(
+        self,
+        path: str | Path,
+        *,
+        max_chars: int = 200_000,
+    ) -> AgentRulesDocument | None:
+        """重新读取 AGENT.md 并刷新系统提示词。
+
+        启动时由 ``__init__`` 自动调用一次；文件不存在时清空前缀并恢复
+        原始提示词，不抛异常。也便于调用方在规则文件更新后热重载。
+        """
+        document = load_agent_rules(Path(path), max_chars=max_chars)
+        self.agent_rules = document
+        if document is None:
+            self.agent_rules_path = ""
+            self.agent_rules_hash = ""
+            self._agent_rules_prefix = ""
+        else:
+            self.agent_rules_path = str(document.path)
+            self.agent_rules_hash = document.sha256
+            self._agent_rules_prefix = build_agent_rules_prompt(document)
+
+        # 重新构建系统提示词（包含 Skill 清单），保证规则始终在最前端。
+        self.refresh_system_prompt()
+        return document
 
     def inject_project_instructions(
         self,
@@ -187,11 +237,11 @@ class Agent:
         if self._base_system_prompt:
             base = self._base_system_prompt.rstrip()
             skills_prompt = build_skills_prompt(self.skills)
-            self.system_prompt = (
-                base + "\n\n" + skills_prompt if skills_prompt else base
-            )
+            prompt = base + "\n\n" + skills_prompt if skills_prompt else base
         else:
-            self.system_prompt = build_system_prompt(self.registry, self.skills)
+            prompt = build_system_prompt(self.registry, self.skills)
+        # AGENT.md 长期规则始终放在系统提示词最前端。
+        self.system_prompt = self._with_agent_rules(prompt)
 
         if self.messages and self.messages[0].get("role") == "system":
             self.messages[0]["content"] = self.system_prompt

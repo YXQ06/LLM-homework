@@ -295,18 +295,75 @@ class FileToolbox:
         return f"已删除目录：{path}（其中 {file_count} 个文件、{dir_count} 个子目录）"
 
     def delete_file(self, arguments: Mapping[str, Any]) -> str:
+        """删除文件或目录。
+
+        为保持原有 ``deleteFile`` 只删文件的语义，删除目录必须显式传入
+        ``recursive=true``；否则仍返回可操作的错误提示。``deleteDirectory``
+        的行为保持不变，仍可直接递归删除目录。
+        """
         raw_path = text_argument(arguments, "path", required=True)
+        recursive = bool((arguments or {}).get("recursive", False))
         path = resolve_path(raw_path)
         if not os.path.exists(path):
-            raise FileNotFoundError(f"文件不存在：{path}")
+            raise FileNotFoundError(f"路径不存在：{path}")
+
         if os.path.isdir(path):
-            raise IsADirectoryError(
-                f"path 指向目录，deleteFile 只能删除文件；"
-                f"请提供具体文件名（例如 test.md），删除目录请用 deleteDirectory：{path}"
+            if not recursive:
+                raise IsADirectoryError(
+                    f"path 指向目录：{path}。如确认删除整个目录，"
+                    "请传入 recursive=true；也可以使用 deleteDirectory。"
+                )
+            file_count = 0
+            dir_count = 0
+            for _, dirnames, filenames in os.walk(path):
+                dir_count += len(dirnames)
+                file_count += len(filenames)
+            shutil.rmtree(path)
+            return (
+                f"已删除目录：{path}（其中 {file_count} 个文件、"
+                f"{dir_count} 个子目录）"
             )
+
         size = os.path.getsize(path)
         os.remove(path)
         return f"已删除文件：{path}（{human_size(size)}）"
+
+    def move_file(self, arguments: Mapping[str, Any]) -> str:
+        """移动或重命名文件/目录（跨磁盘移动时自动复制后删除）。"""
+        raw_source = text_argument(arguments, "source", required=True)
+        raw_target = text_argument(arguments, "destination", required=True)
+        overwrite = bool((arguments or {}).get("overwrite", False))
+
+        source = resolve_path(raw_source)
+        if not os.path.exists(source):
+            raise FileNotFoundError(f"源路径不存在：{source}")
+
+        target = resolve_path(raw_target)
+        # destination 指向已存在目录时，表示“移动到该目录下”，保留原文件名。
+        if os.path.isdir(target):
+            target = os.path.join(target, os.path.basename(source))
+        target = os.path.abspath(target)
+
+        if os.path.normcase(source) == os.path.normcase(target):
+            raise ValueError("源路径与目标路径相同，无需移动")
+        if os.path.exists(target):
+            if not overwrite:
+                raise FileExistsError(
+                    f"目标已存在，拒绝覆盖：{target}（如需覆盖请传 overwrite=true）"
+                )
+            if os.path.isdir(target):
+                raise IsADirectoryError(
+                    f"目标是目录，moveFile 不会覆盖目录：{target}"
+                )
+
+        parent = os.path.dirname(target)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+
+        is_dir = os.path.isdir(source)
+        shutil.move(source, target)
+        action = "目录" if is_dir else "文件"
+        return f"已移动{action}：{source} -> {target}"
 
     def rename_path(self, arguments: Mapping[str, Any]) -> str:
         raw_path = text_argument(arguments, "path", required=True)
@@ -340,7 +397,7 @@ class FileToolbox:
     # ------------------------------------------------------------------ 工具声明
 
     def specs(self) -> list[ToolSpec]:
-        """生成 10 个文件工具的声明（名称、Schema、执行函数、追问示例）。"""
+        """生成 11 个文件工具的声明（名称、Schema、执行函数、追问示例）。"""
         return [
             ToolSpec(
                 name="getCurrentDirectory",
@@ -493,18 +550,57 @@ class FileToolbox:
             ),
             ToolSpec(
                 name="deleteFile",
-                description="删除指定文件（不会删除目录；path 必须写到具体文件名，例如 test.md）",
+                description=(
+                    "删除指定文件；也可以删除目录，但删除目录必须显式传 "
+                    "recursive=true（普通文件请写到具体文件名，例如 test.md）"
+                ),
                 parameters=object_schema(
                     properties={
                         "path": {
                             "type": "string",
-                            "description": "要删除的文件路径",
-                        }
+                            "description": "要删除的文件或目录路径",
+                        },
+                        "recursive": {
+                            "type": "boolean",
+                            "description": "path 是目录时是否递归删除其中全部内容，默认 false",
+                        },
                     },
                     required=["path"],
                 ),
                 handler=self.delete_file,
                 example_arguments={"path": "test.txt"},
+            ),
+            ToolSpec(
+                name="moveFile",
+                description=(
+                    "移动或重命名文件/目录；目标目录不存在时自动创建，"
+                    "跨磁盘移动会自动复制后删除"
+                ),
+                parameters=object_schema(
+                    properties={
+                        "source": {
+                            "type": "string",
+                            "description": "源文件或目录路径",
+                        },
+                        "destination": {
+                            "type": "string",
+                            "description": (
+                                "目标路径；如果已存在同名目录，则移动到该目录下；"
+                                "只写新名称时表示在原目录内重命名"
+                            ),
+                        },
+                        "overwrite": {
+                            "type": "boolean",
+                            "description": "目标文件已存在时是否覆盖，默认 false",
+                        },
+                    },
+                    required=["source", "destination"],
+                ),
+                handler=self.move_file,
+                example_arguments={
+                    "source": "old.txt",
+                    "destination": "archive/old.txt",
+                },
             ),
             ToolSpec(
                 name="renamePath",

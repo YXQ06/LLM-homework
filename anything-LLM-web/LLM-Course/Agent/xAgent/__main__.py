@@ -140,6 +140,11 @@ def run_cli() -> None:
 
     print("xAgent CLI 已启动（输入 Ctrl+C 退出，/help 查看命令）")
     print(f"模型：{config.llm.model} | 工具数：{len(registry)}")
+    if agent.agent_rules is not None:
+        print(
+            f"长期规则：{agent.agent_rules.path}"
+            f"（{len(agent.agent_rules.text)} 字符，已放在系统提示词最前端）"
+        )
     print("-" * 40)
 
     try:

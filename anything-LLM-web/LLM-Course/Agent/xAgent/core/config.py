@@ -73,6 +73,15 @@ session_auto_save_on_exit = true
 agents_md_filename = AGENTS.md
 agents_md_max_chars = 200000
 
+# 智能体长期规则：启动时读取并放在系统提示词最前端（文件不存在则跳过）
+agent_md_filename = AGENT.md
+agent_md_max_chars = 200000
+
+# 农学试验工具：代码解释器沙盒目录、分析结果目录、单次代码超时
+agronomy_sandbox_dir = .agents/sandbox
+agronomy_output_dir = .agents/outputs
+agronomy_code_timeout = 30
+
 # TUI
 tui_sidebar_collapse_width = 110
 tui_spinner_interval = 0.1
@@ -146,6 +155,15 @@ class AgentConfig:
     # AGENTS.md 项目说明
     agents_md_filename: str = "AGENTS.md"
     agents_md_max_chars: int = 200_000
+
+    # AGENT.md 长期固定规则（启动时放在系统提示词最前端）
+    agent_md_filename: str = "AGENT.md"
+    agent_md_max_chars: int = 200_000
+
+    # 农学试验工具：代码解释器沙盒、分析输出目录、单次代码执行超时
+    agronomy_sandbox_dir: str = ".agents/sandbox"
+    agronomy_output_dir: str = ".agents/outputs"
+    agronomy_code_timeout: int = 30
 
     # TUI 可调参数
     tui_sidebar_collapse_width: int = 110
@@ -428,6 +446,21 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         ),
         agents_md_max_chars=_get_int(
             agent_section, "agents_md_max_chars", 200_000, minimum=1_000
+        ),
+        agent_md_filename=_get_text(
+            agent_section, "agent_md_filename", "AGENT.md"
+        ),
+        agent_md_max_chars=_get_int(
+            agent_section, "agent_md_max_chars", 200_000, minimum=1_000
+        ),
+        agronomy_sandbox_dir=_get_text(
+            agent_section, "agronomy_sandbox_dir", ".agents/sandbox"
+        ),
+        agronomy_output_dir=_get_text(
+            agent_section, "agronomy_output_dir", ".agents/outputs"
+        ),
+        agronomy_code_timeout=_get_int(
+            agent_section, "agronomy_code_timeout", 30, minimum=1
         ),
         tui_sidebar_collapse_width=_get_int(
             agent_section, "tui_sidebar_collapse_width", 110, minimum=40

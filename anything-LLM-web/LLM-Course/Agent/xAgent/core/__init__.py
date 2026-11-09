@@ -5,6 +5,14 @@ core 内部模块的实现细节可以随时调整，不影响上层。
 """
 
 from .agent import Agent
+from .agent_rules import (
+    AGENT_RULES_END_MARKER,
+    AGENT_RULES_MARKER,
+    AgentRulesDocument,
+    build_agent_rules_prompt,
+    contains_agent_rules,
+    load_agent_rules,
+)
 from .agents_md import (
     AGENTS_MD_MARKER,
     AgentsDocument,
@@ -92,6 +100,7 @@ from .skills import (
     find_skills_root,
 )
 from .tools import (
+    AgronomyToolbox,
     CliToolbox,
     SearchToolbox,
     ToolRegistry,
@@ -103,11 +112,15 @@ from .tools import (
 
 __all__ = [
     "AGENTS_MD_MARKER",
+    "AGENT_RULES_END_MARKER",
+    "AGENT_RULES_MARKER",
     "Agent",
     "AgentConfig",
     "AgentError",
     "AgentEvent",
+    "AgentRulesDocument",
     "AgentsDocument",
+    "AgronomyToolbox",
     "AnswerReady",
     "AppConfig",
     "ArchiveRecord",
@@ -163,8 +176,10 @@ __all__ = [
     "TurnStarted",
     "WebToolbox",
     "build_agents_md_message",
+    "build_agent_rules_prompt",
     "build_default_registry",
     "contains_agents_md",
+    "contains_agent_rules",
     "build_skills_prompt",
     "build_system_prompt",
     "create_mcp_manager",
@@ -176,6 +191,7 @@ __all__ = [
     "find_skills_root",
     "format_messages",
     "load_agents_md",
+    "load_agent_rules",
     "load_config",
     "load_mcp_config",
     "register_mcp_tools",

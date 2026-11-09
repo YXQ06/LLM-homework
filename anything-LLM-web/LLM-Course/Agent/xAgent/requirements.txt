@@ -4,3 +4,10 @@ textual>=8.2.8
 trafilatura>=2.0
 # MCP Python SDK（支持 1.x / 2.x，优先使用 2.x）
 mcp>=1.9
+
+# 农学试验工具的可选增强依赖（不安装时仍可做 CSV 统计，只是缺少 Excel/绘图/Word）
+# pandas>=2.0
+# numpy>=1.24
+# matplotlib>=3.7
+# openpyxl>=3.1
+# python-docx>=1.1

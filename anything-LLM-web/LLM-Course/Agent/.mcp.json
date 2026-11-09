@@ -25,6 +25,16 @@
       "url": "http://127.0.0.1:8091/mcp",
       "timeout": 60,
       "connect_timeout": 10
+    },
+    "AgronomyMCP": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["mcp_servers/agronomy_mcp_server.py"],
+      "cwd": "xAgent",
+      "timeout": 120,
+      "connect_timeout": 30,
+      "enabled": false,
+      "description": "耕云农学田间试验 MCP Server（stdio，默认关闭）。需要时把 enabled 改为 true。"
     }
   },
   "autoStart": {

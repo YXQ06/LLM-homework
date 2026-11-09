@@ -49,7 +49,7 @@ LLM-homework/
         │       ├── mcp_servers/           # 农学 MCP Server（stdio，默认关闭）
         │       ├── tests/                 # 14 个 unittest 文件
         │       ├── .env.example           # 网页前端配置模板
-        │       └── README.md              # 550 行：架构、工具清单、配置、排障
+        │       └── README.md              # 800 行：架构、工具清单、配置、排障
         ├── AnythingLLMMCP/                # AnythingLLM 的 MCP 封装
         │   ├── server.py                  # 4 个工具，Streamable HTTP
         │   └── README.md

@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from ..config import AgentConfig, SearchConfig
+from .agronomy import AgronomyToolbox
 from .base import ToolRegistry, ToolResult, ToolSpec
 from .cli import CliToolbox
 from .files import FileToolbox
@@ -39,6 +40,13 @@ def build_default_registry(
     for spec in CliToolbox(agent_config).specs():
         registry.register(spec)
 
+    # 农学田间试验工具：数据读取、Python 沙盒、统计分析、报告生成。
+    # 与 MCP 工具一样按需注册，MCP 热插拔不影响这里的本地工具。
+    for spec in AgronomyToolbox(
+        agent_config, project_root=project_root
+    ).specs():
+        registry.register(spec)
+
     # recallContext 与压缩流程共用同一个归档目录。
     root = Path(project_root or os.getcwd()).resolve()
     archive_dir = Path(
@@ -57,6 +65,7 @@ def build_default_registry(
 
 
 __all__ = [
+    "AgronomyToolbox",
     "CliToolbox",
     "FileToolbox",
     "ToolRegistry",
