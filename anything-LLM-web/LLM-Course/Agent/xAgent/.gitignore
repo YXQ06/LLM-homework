@@ -7,3 +7,8 @@ logs/
 .agents/sessions/
 .agents/sandbox/
 .agents/outputs/
+
+# 第三方整包技能不入库（M5）：只忽略 guizang-ppt-skill（6MB 第三方仓库，
+# 含 LICENSE / CI 模板 / 3.5MB 截图）；自建的 notice / officecli /
+# tiny-encryption 仍正常跟踪，用于展示技能机制。
+.agents/skills/guizang-ppt-skill/
