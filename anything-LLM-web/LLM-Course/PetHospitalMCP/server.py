@@ -3,15 +3,32 @@
 封装宠物医院 REST API 为 MCP Tools，供其他 Agent MCP Client 消费
 """
 
+import asyncio
+import json
+import logging
+import os
+
 import httpx
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
 
+# 统一日志格式（L5）：所有 MCP Server 共用同一套 logging 配置
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("pet-hospital-mcp")
+
 # 创建 MCP Server
 mcp = MCPServer("pet-hospital-mcp")
 
-# REST API 配置
-REST_API_BASE = "http://127.0.0.1:8080"
+# REST API 配置（M4：走环境变量，换端口/换机器无需改源码）
+REST_API_BASE = os.getenv("PET_HOSPITAL_API_BASE", "http://127.0.0.1:8080").rstrip("/")
+
+# 上游瞬时故障重试（M2）：与 AnythingLLM MCP 的 search 工具保持一致的韧性设计
+_RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+_MAX_ATTEMPTS = 3
+_RETRY_BACKOFF_SECONDS = 0.5
 
 # 合法枚举值（用于输入校验）
 VALID_SPECIES = {"犬", "猫", "兔", "仓鼠", "鹦鹉", "龟", "马"}
@@ -19,22 +36,51 @@ VALID_STATUS = {"待就诊", "就诊中", "住院中", "已康复", "慢性病�
 VALID_GENDER = {"公", "母"}
 
 
+def _error(code: int, message: str) -> str:
+    """统一的错误返回（M1）：结构化 JSON，与 AnythingLLM MCP 保持同一契约，
+    Agent 客户端可以直接解析 code 做分支，而不必对自然语言做模糊匹配。"""
+    return json.dumps(
+        {"ok": False, "error": {"code": code, "message": message}},
+        ensure_ascii=False,
+    )
+
+
 async def api_request(method: str, path: str, params: dict = None, json_data: dict = None) -> dict:
-    """通用 REST API 请求"""
-    async with httpx.AsyncClient() as client:
+    """通用 REST API 请求（M2：对 429/5xx 与网络错误做短退避重试）"""
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_ATTEMPTS + 1):
         try:
-            url = f"{REST_API_BASE}{path}"
-            response = await client.request(
-                method=method,
-                url=url,
-                params=params,
-                json=json_data,
-                timeout=10.0
-            )
+            async with httpx.AsyncClient() as client:
+                response = await client.request(
+                    method=method,
+                    url=f"{REST_API_BASE}{path}",
+                    params=params,
+                    json=json_data,
+                    timeout=10.0,
+                )
+            if response.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS:
+                logger.warning(
+                    "上游返回 %s（%s %s），第 %d 次尝试失败，%.1fs 后重试",
+                    response.status_code, method, path, attempt,
+                    _RETRY_BACKOFF_SECONDS * attempt,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+                continue
             response.raise_for_status()
             return response.json()
-        except httpx.HTTPError as e:
-            return {"code": 500, "message": f"API 请求失败: {str(e)}", "data": None}
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt < _MAX_ATTEMPTS:
+                logger.warning(
+                    "上游请求异常（%s %s）： %s，第 %d 次尝试失败，%.1fs 后重试",
+                    method, path, exc, attempt, _RETRY_BACKOFF_SECONDS * attempt,
+                )
+                await asyncio.sleep(_RETRY_BACKOFF_SECONDS * attempt)
+    return {
+        "code": 502,
+        "message": f"API 请求失败（已重试 {_MAX_ATTEMPTS} 次）: {last_error}",
+        "data": None,
+    }
 
 
 @mcp.tool(
@@ -107,7 +153,7 @@ async def list_pets(
     if result.get("code") == 200 and result.get("data"):
         return format_pets_response(result["data"])
     else:
-        return f"查询失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"查询失败：{result.get('message', '未知错误')}")
 
 
 def format_pets_response(data: dict) -> str:
@@ -218,7 +264,7 @@ async def get_pet(pet_id: str) -> str:
     if result.get("code") == 200 and result.get("data"):
         return format_pet_detail(result["data"])
     else:
-        return f"查询失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"查询失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -270,17 +316,17 @@ async def create_pet(
     Returns:
         创建结果
     """
-    # 输入校验
+    # 输入校验（校验失败统一返回 400 结构化错误）
     if not name.strip():
-        return "创建失败: 宠物姓名不能为空"
+        return _error(400, "创建失败：宠物姓名不能为空")
     if species not in VALID_SPECIES:
-        return f"创建失败: 物种必须是 {', '.join(sorted(VALID_SPECIES))} 中的一种"
+        return _error(400, f"创建失败：物种必须是 {', '.join(sorted(VALID_SPECIES))} 中的一种")
     if gender and gender not in VALID_GENDER:
-        return f"创建失败: 性别必须是 {', '.join(sorted(VALID_GENDER))} 中的一种"
+        return _error(400, f"创建失败：性别必须是 {', '.join(sorted(VALID_GENDER))} 中的一种")
     if age_months < 0:
-        return "创建失败: 月龄不能为负数"
+        return _error(400, "创建失败：月龄不能为负数")
     if status and status not in VALID_STATUS:
-        return f"创建失败: 就诊状态必须是 {', '.join(sorted(VALID_STATUS))} 中的一种"
+        return _error(400, f"创建失败：就诊状态必须是 {', '.join(sorted(VALID_STATUS))} 中的一种")
 
     pet_data = {
         "name": name,
@@ -314,7 +360,7 @@ async def create_pet(
         new_pet = result.get("data", {})
         return f"创建成功！宠物ID: {new_pet.get('id', 'N/A')}\n{format_pet_detail(new_pet)}"
     else:
-        return f"创建失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"创建失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -394,7 +440,7 @@ async def update_pet(
             pet_data[key] = value
     
     if not pet_data:
-        return "没有提供要更新的字段"
+        return _error(400, "没有提供要更新的字段")
     
     result = await api_request("PATCH", f"/api/v1/pets/{pet_id}", json_data=pet_data)
     
@@ -402,7 +448,7 @@ async def update_pet(
         updated_pet = result.get("data", {})
         return f"更新成功！\n{format_pet_detail(updated_pet)}"
     else:
-        return f"更新失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"更新失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -429,7 +475,7 @@ async def delete_pet(pet_id: str) -> str:
     if result.get("code") == 200:
         return f"删除成功！宠物 {pet_id} 已被移除"
     else:
-        return f"删除失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"删除失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -477,7 +523,7 @@ async def get_pet_records(pet_id: str) -> str:
         
         return "\n".join(lines)
     else:
-        return f"查询失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"查询失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -532,7 +578,7 @@ async def add_pet_record(
     if result.get("code") == 200 or result.get("code") == 201:
         return f"病历添加成功！宠物 {pet_id}"
     else:
-        return f"添加失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"添加失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -575,7 +621,7 @@ async def get_pet_charges(pet_id: str) -> str:
         
         return "\n".join(lines)
     else:
-        return f"查询失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"查询失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -621,7 +667,7 @@ async def add_pet_charge(
     if result.get("code") == 200 or result.get("code") == 201:
         return f"收费记录添加成功！宠物 {pet_id}，金额 ¥{amount:.2f}"
     else:
-        return f"添加失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"添加失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -679,7 +725,7 @@ async def search_pets(
         
         return "\n".join(lines)
     else:
-        return f"搜索失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"搜索失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -739,7 +785,7 @@ async def get_stats() -> str:
         
         return "\n".join(lines)
     else:
-        return f"获取统计失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"获取统计失败：{result.get('message', '未知错误')}")
 
 
 @mcp.tool(
@@ -774,15 +820,13 @@ async def export_data(format: str = "json") -> str:
             pets = data if isinstance(data, list) else []
             return f"导出成功！共 {len(pets)} 条宠物档案记录"
     else:
-        return f"导出失败: {result.get('message', '未知错误')}"
+        return _error(result.get("code", 500), f"导出失败：{result.get('message', '未知错误')}")
 
 
 # 运行服务器
 if __name__ == "__main__":
-    print("宠物医院 MCP Server 启动中...")
-    print(f"代理 REST API: {REST_API_BASE}")
-    print("传输方式: Streamable HTTP")
-    print("监听地址: http://localhost:8000/mcp")
-    print("\n按 Ctrl+C 停止服务\n")
+    logger.info("宠物医院 MCP Server 启动中...")
+    logger.info("代理 REST API: %s（可用环境变量 PET_HOSPITAL_API_BASE 覆盖）", REST_API_BASE)
+    logger.info("传输方式: Streamable HTTP | 监听地址: http://localhost:8000/mcp")
 
     mcp.run(transport="streamable-http")

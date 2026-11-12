@@ -1,7 +1,9 @@
 """本地文件系统工具：目录查询、文本读取、创建、编辑、删除、重命名。
 
-按“试用版本”的要求，编辑、删除、重命名不做路径安全限制，可操作任意
-有权限的路径；读取与编辑仅接受纯文本（UTF-8 / GBK / UTF-16）。
+安全边界（H2）：在配置里设置 ``allowed_roots``（路径白名单）后，所有文件
+工具只允许操作白名单目录之内的路径，越界直接拒绝；删除类操作额外要求
+``confirm=true`` 显式确认。未配置白名单时保持试用版本的开放行为。
+读取与编辑仅接受纯文本（UTF-8 / GBK / UTF-16）。
 """
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ import time
 from typing import Any, Mapping
 
 from ..config import AgentConfig
-from ..utils.paths import resolve_path
+from ..utils.paths import ensure_within_roots, normalize_roots, resolve_path
 from ..utils.text import decode_text, human_size, looks_binary
 from .base import ToolSpec, object_schema, text_argument
 
@@ -61,6 +63,21 @@ class FileToolbox:
 
     def __init__(self, config: AgentConfig | None = None) -> None:
         self.config = config or AgentConfig()
+        self._roots = normalize_roots(self.config.allowed_roots)
+
+    # ------------------------------------------------------------------ 安全边界
+
+    def _check_boundary(self, path: str) -> str:
+        """路径白名单校验（H2）：配置了 allowed_roots 后越界即拒绝。"""
+        ensure_within_roots(path, self._roots)
+        return path
+
+    def _require_confirm(self, arguments: Mapping[str, Any], what: str) -> None:
+        """删除类危险操作必须显式 confirm=true，防止模型一句话误删。"""
+        if not bool((arguments or {}).get("confirm", False)):
+            raise PermissionError(
+                f"{what}属于危险操作：请显式传入 confirm=true 确认后重试"
+            )
 
     # ------------------------------------------------------------------ 工具实现
 
@@ -71,6 +88,7 @@ class FileToolbox:
         raw_path = text_argument(arguments, "path", default=".")
         show_hidden = bool((arguments or {}).get("show_hidden", False))
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"目录不存在：{path}")
         if not os.path.isdir(path):
@@ -118,6 +136,7 @@ class FileToolbox:
     def get_file_type(self, arguments: Mapping[str, Any]) -> str:
         raw_path = text_argument(arguments, "path", required=True)
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"文件不存在：{path}")
         if os.path.isdir(path):
@@ -147,6 +166,7 @@ class FileToolbox:
     def read_text_file(self, arguments: Mapping[str, Any]) -> str:
         raw_path = text_argument(arguments, "path", required=True)
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"文件不存在：{path}")
         if os.path.isdir(path):
@@ -190,6 +210,7 @@ class FileToolbox:
             )
 
         directory_path = resolve_path(directory)
+        self._check_boundary(directory_path)
         if os.path.exists(directory_path) and not os.path.isdir(directory_path):
             raise NotADirectoryError(f"directory 不是目录：{directory_path}")
         os.makedirs(directory_path, exist_ok=True)
@@ -218,6 +239,7 @@ class FileToolbox:
             )
 
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"文件不存在：{path}（如需新建请用 createFile）")
         if os.path.isdir(path):
@@ -268,6 +290,7 @@ class FileToolbox:
     def create_directory(self, arguments: Mapping[str, Any]) -> str:
         raw_path = text_argument(arguments, "path", required=True)
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if os.path.exists(path):
             if os.path.isdir(path):
                 return f"目录已存在，无需创建：{path}"
@@ -277,7 +300,10 @@ class FileToolbox:
 
     def delete_directory(self, arguments: Mapping[str, Any]) -> str:
         raw_path = text_argument(arguments, "path", required=True)
+        # 危险操作双重防护：先 confirm 确认，再校验路径白名单
+        self._require_confirm(arguments, "递归删除目录")
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"目录不存在：{path}")
         if not os.path.isdir(path):
@@ -304,6 +330,7 @@ class FileToolbox:
         raw_path = text_argument(arguments, "path", required=True)
         recursive = bool((arguments or {}).get("recursive", False))
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"路径不存在：{path}")
 
@@ -313,6 +340,7 @@ class FileToolbox:
                     f"path 指向目录：{path}。如确认删除整个目录，"
                     "请传入 recursive=true；也可以使用 deleteDirectory。"
                 )
+            self._require_confirm(arguments, "递归删除目录")
             file_count = 0
             dir_count = 0
             for _, dirnames, filenames in os.walk(path):
@@ -324,6 +352,7 @@ class FileToolbox:
                 f"{dir_count} 个子目录）"
             )
 
+        self._require_confirm(arguments, "删除文件")
         size = os.path.getsize(path)
         os.remove(path)
         return f"已删除文件：{path}（{human_size(size)}）"
@@ -335,10 +364,12 @@ class FileToolbox:
         overwrite = bool((arguments or {}).get("overwrite", False))
 
         source = resolve_path(raw_source)
+        self._check_boundary(source)
         if not os.path.exists(source):
             raise FileNotFoundError(f"源路径不存在：{source}")
 
         target = resolve_path(raw_target)
+        self._check_boundary(target)
         # destination 指向已存在目录时，表示“移动到该目录下”，保留原文件名。
         if os.path.isdir(target):
             target = os.path.join(target, os.path.basename(source))
@@ -369,6 +400,7 @@ class FileToolbox:
         raw_path = text_argument(arguments, "path", required=True)
         new_name = text_argument(arguments, "new_name", required=True)
         path = resolve_path(raw_path)
+        self._check_boundary(path)
         if not os.path.exists(path):
             raise FileNotFoundError(f"路径不存在：{path}")
 
@@ -384,6 +416,7 @@ class FileToolbox:
             else os.path.join(os.path.dirname(path), new_name)
         )
         target = os.path.abspath(target)
+        self._check_boundary(target)
 
         if os.path.normcase(target) == os.path.normcase(path):
             raise ValueError("新名称与原名称相同")
@@ -535,24 +568,32 @@ class FileToolbox:
             ),
             ToolSpec(
                 name="deleteDirectory",
-                description="删除目录；支持删除非空目录（递归删除其中所有内容），请谨慎使用",
+                description=(
+                    "删除目录；支持删除非空目录（递归删除其中所有内容）。"
+                    "危险操作：必须显式传入 confirm=true 才会执行"
+                ),
                 parameters=object_schema(
                     properties={
                         "path": {
                             "type": "string",
                             "description": "要删除的目录路径",
-                        }
+                        },
+                        "confirm": {
+                            "type": "boolean",
+                            "description": "危险操作确认：必须为 true 才会执行删除，默认 false",
+                        },
                     },
-                    required=["path"],
+                    required=["path", "confirm"],
                 ),
                 handler=self.delete_directory,
-                example_arguments={"path": "test_dir"},
+                example_arguments={"path": "test_dir", "confirm": True},
             ),
             ToolSpec(
                 name="deleteFile",
                 description=(
                     "删除指定文件；也可以删除目录，但删除目录必须显式传 "
-                    "recursive=true（普通文件请写到具体文件名，例如 test.md）"
+                    "recursive=true（普通文件请写到具体文件名，例如 test.md）。"
+                    "危险操作：必须显式传入 confirm=true 才会执行"
                 ),
                 parameters=object_schema(
                     properties={
@@ -564,11 +605,15 @@ class FileToolbox:
                             "type": "boolean",
                             "description": "path 是目录时是否递归删除其中全部内容，默认 false",
                         },
+                        "confirm": {
+                            "type": "boolean",
+                            "description": "危险操作确认：必须为 true 才会执行删除，默认 false",
+                        },
                     },
-                    required=["path"],
+                    required=["path", "confirm"],
                 ),
                 handler=self.delete_file,
-                example_arguments={"path": "test.txt"},
+                example_arguments={"path": "test.txt", "confirm": True},
             ),
             ToolSpec(
                 name="moveFile",

@@ -175,6 +175,12 @@ class AgentConfig:
     mcp_connect_timeout: float = 20.0
     mcp_startup_wait_extra: float = 15.0
 
+    # 文件工具路径白名单（H2 安全边界）：空元组 = 不限制（保持试用版本的开放
+    # 行为）；配置后所有文件工具的读写 / 删除 / 移动 / 重命名只允许落在这些
+    # 根目录之内，越界直接抛 PermissionError。config.ini 示例：
+    #   allowed_roots = D:\projects, C:\Users\me\Documents
+    allowed_roots: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class SearchConfig:
@@ -321,6 +327,15 @@ def _clean_secret(value: str | None) -> str:
     if text.lower().startswith("bearer "):
         text = text[7:].strip()
     return re.sub(r"\s+", "", text)
+
+
+def _get_roots(section, key: str) -> tuple[str, ...]:
+    """读取路径白名单配置：支持逗号 / 分号 / 换行分隔的多个根目录。"""
+    raw = section.get(key) if section else None
+    if not raw:
+        return ()
+    parts = [p.strip() for p in re.split(r"[;,\n]", str(raw)) if p.strip()]
+    return tuple(parts)
 
 
 def _agent_section(
@@ -478,6 +493,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> AppConfig:
         mcp_startup_wait_extra=_get_float(
             agent_section, "mcp_startup_wait_extra", 15.0, minimum=0.0
         ),
+        allowed_roots=_get_roots(agent_section, "allowed_roots"),
     )
 
     search_section = _search_section(parser)

@@ -6,3 +6,9 @@ config.ini
 .agents/context/
 logs/
 __pycache__/
+
+# 第三方整包技能不入库（M5）：.agents/skills 是运行时目录，仓库只保留
+# 自建的精简示例与说明；其余技能本地放置即可，需要时按 README 获取。
+.agents/skills/*
+!.agents/skills/README.md
+!.agents/skills/example-hello/

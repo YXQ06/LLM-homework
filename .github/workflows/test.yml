@@ -1,0 +1,35 @@
+name: tests
+
+# L1：xAgent 单元测试自动化（Python 3.10 / 3.11 矩阵）
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 设置 Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: anything-LLM-web/LLM-Course/Agent/xAgent/requirements.txt
+
+      - name: 安装 xAgent 依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r anything-LLM-web/LLM-Course/Agent/xAgent/requirements.txt
+
+      - name: 运行单元测试
+        working-directory: anything-LLM-web/LLM-Course/Agent
+        run: python -m unittest discover -s xAgent/tests -t . -q

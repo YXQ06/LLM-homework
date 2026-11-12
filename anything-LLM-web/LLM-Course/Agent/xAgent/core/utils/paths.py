@@ -32,3 +32,38 @@ def resolve_path(raw: str, base: str | os.PathLike[str] | None = None) -> str:
         return path
 
     return os.path.abspath(os.path.join(base_dir, raw))
+
+
+def normalize_roots(roots) -> tuple[str, ...]:
+    """把白名单配置归一化为绝对路径元组；空输入返回空元组（表示不限制）。"""
+    result = []
+    for root in roots or ():
+        text = str(root).strip()
+        if text:
+            result.append(os.path.normcase(os.path.abspath(os.path.expanduser(text))))
+    return tuple(result)
+
+
+def ensure_within_roots(path: str, roots, label: str = "路径") -> None:
+    """校验 ``path`` 落在 ``roots`` 白名单内，越界时抛 ``PermissionError``。
+
+    ``roots`` 为空表示不做限制（保持试用版本的开放行为）；配置了白名单后，
+    所有文件工具的读写、删除、移动、重命名都必须落在允许的根目录之内，
+    防止 Agent 被恶意提示词诱导去操作系统目录等敏感位置。
+    """
+    normalized = normalize_roots(roots)
+    if not normalized:
+        return
+    target = os.path.normcase(os.path.abspath(path))
+    for root in normalized:
+        if target == root:
+            return
+        try:
+            if os.path.commonpath([target, root]) == root:
+                return
+        except ValueError:
+            # Windows 不同盘符之间 commonpath 会抛 ValueError，视为不在范围内
+            continue
+    raise PermissionError(
+        f"{label}超出允许范围：{path}（允许的根目录：{', '.join(normalized)}）"
+    )

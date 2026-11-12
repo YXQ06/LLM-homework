@@ -1,18 +1,21 @@
 """
 AnythingLLM MCP Server
 
-把本机 AnythingLLM 的 REST API 封装成 MCP 工具，覆盖“看 / 传 / 问”三类操作：
+把本机 AnythingLLM 的 REST API 封装成 MCP 工具，覆盖"看 / 传 / 问 / 管"四类操作：
 
 * ``get_first_workspace_files`` —— 看：第一个工作区的文档清单
 * ``list_workspaces``           —— 看：所有工作区
 * ``upload_document``           —— 传：本地文档上传 + 加入工作区向量化
 * ``chat_with_workspace``       —— 问：针对工作区知识库提问（RAG 检索 + 对话）
+* ``get_embed_status``          —— 管：工作区向量化状态（各文档分块/置顶信息）
+* ``delete_document``           —— 管：把文档移出工作区（取消向量化）
 
 传输方式：Streamable HTTP
 协议兼容：MCP 2026-07-28（无握手/无会话）以及之前的握手协议（带 Mcp-Session-Id + GET 长连接）
 """
 
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -20,6 +23,13 @@ from pathlib import Path
 import httpx
 from mcp.server import MCPServer
 from mcp.types import ToolAnnotations
+
+# 统一日志格式（L5）：与 PetHospitalMCP 保持一致，支持 LOG_LEVEL 环境变量
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("anythingllm-mcp")
 
 SERVER_NAME = "anythingllm-mcp"
 HOST = os.getenv("MCP_HOST", "127.0.0.1")
@@ -357,11 +367,102 @@ async def chat_with_workspace(
     return "\n".join(lines)
 
 
+@mcp.tool(
+    name="get_embed_status",
+    description="查询工作区的向量化状态：每个文档的路径、字数、分块 token 估算、置顶状态，用于确认上传后是否已成功入库",
+    annotations=ToolAnnotations(title="向量化状态查询", readOnlyHint=True, openWorldHint=False),
+)
+async def get_embed_status(workspace_slug: str = "") -> str:
+    """
+    查询工作区中各文档的向量化状态。
+
+    Args:
+        workspace_slug: 目标工作区 slug；留空则使用列表中的第一个工作区
+
+    Returns:
+        文档清单及其分块/置顶状态；失败时返回结构化 JSON 错误
+    """
+    missing = _check_key()
+    if missing:
+        return missing
+
+    try:
+        slug, err = await _resolve_slug(workspace_slug)
+        if err:
+            return err
+        detail = (await _get(f"/workspace/{slug}")).get("workspace") or []
+    except Exception as exc:
+        return _error(500, f"获取工作区状态失败：{exc}")
+
+    documents = detail[0].get("documents", []) if detail else []
+    if not documents:
+        return f"工作区 {slug} 中暂无已入库文档（空工作区）。"
+
+    lines = [f"=== 工作区 {slug} 向量化状态（共 {len(documents)} 个文档） ===", ""]
+    for i, doc in enumerate(documents, 1):
+        meta = _safe_json(doc.get("metadata"), {}) or {}
+        lines.append(
+            f"{i}. {doc.get('filename')}"
+            f" | 字数: {meta.get('wordCount', 'N/A')}"
+            f" | 分块(token): {meta.get('token_count_estimate', 'N/A')}"
+            f" | 置顶: {'是' if doc.get('pinned') else '否'}"
+            f" | 更新: {doc.get('lastUpdatedAt') or 'N/A'}"
+        )
+        lines.append(f"   路径: {doc.get('docpath')}")
+    lines.append("")
+    lines.append("说明: 文档出现在此列表中即表示已加入工作区并可被检索。")
+    return "\n".join(lines)
+
+
+@mcp.tool(
+    name="delete_document",
+    description="把一个文档移出指定工作区（取消其向量化与检索资格，文档本体仍保留在 AnythingLLM 文档库中）",
+    annotations=ToolAnnotations(title="移出工作区文档", readOnlyHint=False, openWorldHint=False),
+)
+async def delete_document(
+    doc_path: str,
+    workspace_slug: str = "",
+) -> str:
+    """
+    把文档移出工作区（通过 update-embeddings 的 deletes 通道取消向量化）。
+
+    Args:
+        doc_path: 文档在 AnythingLLM 中的路径（custom-documents/xxx.json 之类，
+            可先调用 get_embed_status 查看）
+        workspace_slug: 目标工作区 slug；留空则使用列表中的第一个工作区
+
+    Returns:
+        操作结果文本；失败时返回结构化 JSON 错误
+    """
+    missing = _check_key()
+    if missing:
+        return missing
+
+    if not doc_path or not doc_path.strip():
+        return _error(400, "doc_path 不能为空，可先调用 get_embed_status 查看文档路径。")
+
+    try:
+        slug, err = await _resolve_slug(workspace_slug)
+        if err:
+            return err
+        await _post(
+            f"/workspace/{slug}/update-embeddings",
+            {"deletes": [doc_path.strip()]},
+            timeout=120.0,
+        )
+    except Exception as exc:
+        return _error(500, f"移出文档失败：{exc}")
+
+    return (
+        f"已把文档移出工作区 {slug}：{doc_path}\n"
+        "该文档不再参与此工作区的检索；如需彻底删除文档本体，请在 AnythingLLM 界面操作。"
+    )
+
+
 if __name__ == "__main__":
-    print("AnythingLLM MCP Server 启动中...")
-    print(f"AnythingLLM: {ANYTHINGLLM_BASE_URL} (API Key: {'已配置' if ANYTHINGLLM_API_KEY else '未配置'})")
-    print(f"MCP 端点: http://{HOST}:{PORT}/mcp")
-    print("传输: Streamable HTTP（兼容 2026-07-28 无握手协议 与 握手协议）")
-    print("\n按 Ctrl+C 停止\n")
+    logger.info("AnythingLLM MCP Server 启动中...")
+    logger.info("AnythingLLM: %s (API Key: %s)", ANYTHINGLLM_BASE_URL, "已配置" if ANYTHINGLLM_API_KEY else "未配置")
+    logger.info("MCP 端点: http://%s:%s/mcp", HOST, PORT)
+    logger.info("传输: Streamable HTTP（兼容 2026-07-28 无握手协议 与 握手协议）")
 
     mcp.run(transport="streamable-http", host=HOST, port=PORT)

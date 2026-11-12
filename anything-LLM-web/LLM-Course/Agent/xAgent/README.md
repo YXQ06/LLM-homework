@@ -434,8 +434,8 @@ python -m xAgent --cli
 | 文件 | `createFile` | 创建文件（自动建目录） |
 | 文件 | `editFile` | overwrite / append / replace |
 | 文件 | `createDirectory` | 创建多级目录 |
-| 文件 | `deleteDirectory` | 递归删除目录 |
-| 文件 | `deleteFile` | 删除文件；目录需 `recursive=true` |
+| 文件 | `deleteDirectory` | 递归删除目录；必须 `confirm=true` |
+| 文件 | `deleteFile` | 删除文件；目录需 `recursive=true`；均需 `confirm=true` |
 | 文件 | `moveFile` | 移动 / 重命名；跨磁盘自动复制后删除 |
 | 文件 | `renamePath` | 重命名文件或目录 |
 | 系统 | `getDate` | 通过本地 `date` / `time` 命令获取时间 |
@@ -772,8 +772,8 @@ python serve_web.py
 ### 16.2 工程风险
 
 - `PythonCodeInterpreter` 是**目录级隔离 + 超时 + 输出截断**，不是操作系统级沙盒；
-- 文件工具按“试用版本”设计，不做路径白名单；请勿在重要目录上执行删除 / 覆盖操作；
-- 删除目录必须显式 `recursive=true`，但仍建议先备份；
+- 文件工具支持**路径白名单**：在 `config.ini` 的 `[agent]` 段配置 `allowed_roots`（逗号分隔多个根目录）后，所有文件工具只允许操作白名单目录内的路径，越界直接抛 `PermissionError`；未配置时保持开放行为；
+- **删除类操作（`deleteFile` / `deleteDirectory`）必须显式传 `confirm=true`** 才会执行，防止模型一句话误删；`deleteDirectory` / 递归删除会连带删掉目录内全部内容，执行前请先备份；
 - `serve_web.py` 默认只监听 `127.0.0.1`，不要直接暴露公网；
 - `.env` 含真实密钥，已被 `.gitignore` 忽略，请勿手动提交；
 - MCP Server 是外部进程，其行为与安全性由对应 Server 负责；

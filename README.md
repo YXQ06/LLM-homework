@@ -18,7 +18,7 @@
 | 2 | `Agent/Practice02` | 多轮对话 + 2 个 Function Call（`getDate` / `isLeapYear`） | `python chat.py` | 同上 |
 | 3 | `Agent/Practice03` | 在 Practice02 上加 10 个本地文件操作工具 | `python chat.py` | 同上 |
 | 4 | `Agent/xAgent` | 定制智能体：24 个本地工具 + Skill 机制 + MCP 客户端 + TUI/CLI/Web | `python -m xAgent` | `textual` `trafilatura` `mcp` |
-| 5 | `AnythingLLMMCP` | 把 AnythingLLM 封装成 MCP Server（4 个工具） | `python server.py` | `mcp` `httpx` |
+| 5 | `AnythingLLMMCP` | 把 AnythingLLM 封装成 MCP Server（6 个工具） | `python server.py` | `mcp` `httpx` |
 | 6 | `PetHospitalMCP` | 宠物医院业务的 MCP Server（12 个工具） | `python server.py` | `mcp` `httpx` |
 | 7 | `AnythingLLMWebPage` | 单文件网页：批量上传文档并向量化 | `python -m http.server 5173` | 浏览器 + AnythingLLM |
 
@@ -51,7 +51,7 @@ LLM-homework/
         │       ├── .env.example           # 网页前端配置模板
         │       └── README.md              # 800 行：架构、工具清单、配置、排障
         ├── AnythingLLMMCP/                # AnythingLLM 的 MCP 封装
-        │   ├── server.py                  # 4 个工具，Streamable HTTP
+        │   ├── server.py                  # 6 个工具，Streamable HTTP
         │   └── README.md
         ├── AnythingLLMWebPage/            # 文档上传页面
         │   ├── index.html                 # 单文件，无构建
@@ -146,7 +146,8 @@ python server.py
 ```
 
 MCP 端点 `http://127.0.0.1:8000/mcp`，客户端配置见 `mcp_config.json`。
-工具：`list_workspaces` / `get_first_workspace_files` / `upload_document` / `chat_with_workspace`。
+工具（6 个）：`list_workspaces` / `get_first_workspace_files` / `upload_document` / `chat_with_workspace` /
+`get_embed_status` / `delete_document`。
 
 ### 4.6 PetHospitalMCP：宠物医院 MCP
 
@@ -194,6 +195,8 @@ python -m http.server 5173
 
 - **工具注册表**：`core/tools/__init__.py` 统一注册 24 个本地工具，`core/prompts.py` 据此自动生成工具声明，
   新增工具不需要改界面；
+- **文件安全边界**：`core/tools/files.py` 支持 `allowed_roots` 路径白名单，配置后越界读写直接拒绝；
+  `deleteFile` / `deleteDirectory` 必须显式 `confirm=true` 才执行，避免模型一句话误删；
 - **主循环**：`core/agent.py` 解析 `tool_calls` → 执行 → 以带 `tool_call_id` 的 `tool` 消息回填，
   `max_tool_rounds` 限制轮数；另有重复调用检测、参数容错重试、结果去重；
 - **技能机制**：`core/skills.py` 支持发现 / 按需加载 / 创建（`loadSkill`、`createSkill`），
@@ -212,14 +215,26 @@ python -m http.server 5173
 - 传输统一用 Streamable HTTP，端点 `/mcp`，同时兼容新旧协议（由 SDK 按 `MCP-Protocol-Version` 分流）；
 - 工具参数用类型注解生成 schema，并在函数体内做枚举 / 非空 / 范围校验；
 - 上游 HTTP 调用统一 15s（上传 180s、向量化 300s）超时，鉴权失败返回可读提示；
-- `AnythingLLMMCP` 的错误统一返回结构化 JSON（`{"ok": false, "error": {"code", "message"}}`），
-  便于模型读取错误码而不是猜自然语言。
+- 两个 Server 的错误都统一返回结构化 JSON（`{"ok": false, "error": {"code", "message"}}`），
+  便于模型读取错误码而不是猜自然语言；
+- 上游 429 / 5xx 与网络抖动统一做 3 次短退避重试（0.5s → 1s），避免瞬时故障直接失败；
+- 日志统一走 `logging`（`%(asctime)s [%(levelname)s] %(name)s: %(message)s`，可用 `LOG_LEVEL` 调整）；
+- 每个服务都提供 `start.bat`（Windows）与 `start.sh`（Linux/macOS），自动建虚拟环境、装依赖、做上游健康检查。
 
 ### 6.3 AnythingLLMWebPage
 
 调用链：`GET /api/v1/workspaces`（填充下拉）→ `POST /api/v1/document/upload`（multipart，字段 `file`，
 `options` 带 `chunkSize` / `chunkOverlap` / `splitOn`）→ 逐文件统计成功/失败 → 进度条与彩色日志。
 上传期间禁用交互控件，401 / 403 / 网络错误分别给出可操作的提示。
+
+问答面板：`POST /api/v1/workspace/{slug}/chat`（`mode=query` 单次检索 / `chat` 带上下文），
+展示回答正文与最多 5 条引用来源，形成「上传 → 向量化 → 提问」闭环。
+日志与回答均用 `textContent` 写入 DOM，响应内容不会被当作 HTML 执行。
+
+### 6.4 工程化
+
+- `.github/workflows/test.yml`：Python 3.10 / 3.11 双版本矩阵，安装依赖后跑 xAgent 全部 unittest；
+- `.agents/skills/` 只保留自建示例（`example-hello`），第三方整包技能不入库（见该目录 README）。
 
 ---
 
@@ -231,7 +246,7 @@ python -m http.server 5173
 | [`Agent/Practice01/README.md`](anything-LLM-web/LLM-Course/Agent/Practice01/README.md) | 单次对话实现与配置 |
 | [`Agent/Practice02/README.md`](anything-LLM-web/LLM-Course/Agent/Practice02/README.md) | 双模式工具调用设计 |
 | [`Agent/Practice03/README.md`](anything-LLM-web/LLM-Course/Agent/Practice03/README.md) | 10 个文件工具的参数与实现 |
-| [`AnythingLLMMCP/README.md`](anything-LLM-web/LLM-Course/AnythingLLMMCP/README.md) | 4 个工具、错误码、调用链 |
+| [`AnythingLLMMCP/README.md`](anything-LLM-web/LLM-Course/AnythingLLMMCP/README.md) | 6 个工具、错误码、调用链 |
 | [`AnythingLLMWebPage/README.md`](anything-LLM-web/LLM-Course/AnythingLLMWebPage/README.md) | 启动、配置、接口、错误处理、安全说明 |
 | [`PetHospitalMCP/README.md`](anything-LLM-web/LLM-Course/PetHospitalMCP/README.md) | 12 个业务工具、上游前置、Inspector / curl 调试 |
 | `PetHospitalServer/windows/MCP_SERVER_DEVELOPMENT.md` | 宠物医院 REST 服务设计说明 |

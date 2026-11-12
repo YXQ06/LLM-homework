@@ -48,7 +48,7 @@ python server.py
 }
 ```
 
-## 3. 工具（4 个）
+## 3. 工具（6 个）
 
 | 工具 | 类型 | 作用 | 对应 AnythingLLM 接口 |
 |---|---|---|---|
@@ -56,6 +56,8 @@ python server.py
 | `get_first_workspace_files` | 只读 | 第一个工作区的文档清单（文件名、类型、字数、分块、路径、时间） | `GET /workspaces` + `GET /workspace/{slug}` |
 | `upload_document` | 写入 | 上传本地文档 → 加入工作区 → 触发向量化 | `POST /document/upload` + `POST /workspace/{slug}/update-embeddings` |
 | `chat_with_workspace` | 写入 | 基于工作区知识库提问，返回回答 + 引用来源 | `POST /workspace/{slug}/chat` |
+| `get_embed_status` | 只读 | 批量查看工作区各文档的向量化状态（字数、分块 token、置顶、更新时间） | `GET /workspace/{slug}` |
+| `delete_document` | 写入 | 把文档移出工作区（取消向量化与检索资格） | `POST /workspace/{slug}/update-embeddings`（`deletes` 通道） |
 
 ### 3.1 `list_workspaces`
 
@@ -117,6 +119,27 @@ python server.py
 
 返回回答正文，并附最多 5 条引用来源（标题、相似度、120 字片段），便于核对答案出处。
 
+### 3.5 `get_embed_status`
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `workspace_slug` | 否 | 第一个工作区 | 目标工作区 |
+
+逐个文档输出：文件名、字数、分块 token 估算、是否置顶、更新时间、存储路径。
+用途：上传后确认是否真的进了工作区（出现在列表中即可被检索），也方便拿 `docpath`
+作为 `delete_document` 的入参。
+
+### 3.6 `delete_document`
+
+| 参数 | 必填 | 默认 | 说明 |
+|---|---|---|---|
+| `doc_path` | 是 | — | 文档路径（先用 `get_embed_status` 查看，如 `custom-documents/xxx.json`） |
+| `workspace_slug` | 否 | 第一个工作区 | 目标工作区 |
+
+调用 `POST /workspace/{slug}/update-embeddings` 的 `deletes` 通道，把文档移出工作区：
+**不再参与该工作区的检索**，但文档本体仍保留在 AnythingLLM 文档库中（彻底删除请在界面操作）。
+这是一个可逆操作——重新 `upload_document` 或手动加入工作区即可恢复。
+
 ## 4. 错误语义
 
 所有失败都以**结构化 JSON** 返回，而不是纯自然语言，模型可直接读到错误码：
@@ -136,5 +159,6 @@ python server.py
 ## 5. 已知限制
 
 - `upload_document` 的向量化依赖 AnythingLLM 返回 `location`/`docpath`；不同版本字段名不同，缺失时会提示手动加入工作区；
-- 未实现文档删除与重新嵌入，需要时在 AnythingLLM 界面操作；
+- `delete_document` 只做“移出工作区”，不删除文档库中的原文件；彻底删除需在 AnythingLLM 界面操作；
+- `get_embed_status` 反映的是工作区文档元数据，无法查看单个 chunk 的原文（AnythingLLM 未开放该接口）；
 - `chat_with_workspace` 是同步等待回答，`mode=chat` 的长对话上下文由 AnythingLLM 侧维护。

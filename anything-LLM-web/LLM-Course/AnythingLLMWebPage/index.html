@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>上传文档到 AnythingLLM</title>
+<title>AnythingLLM 文档上传与问答</title>
 <style>
   body { font-family: system-ui, "Microsoft YaHei", sans-serif; max-width: 760px; margin: 32px auto 64px; padding: 0 16px; color: #1f2328; }
   h2 { margin: 0 0 4px; }
@@ -32,8 +32,8 @@
 </head>
 <body>
 
-<h2>上传文档到 AnythingLLM</h2>
-<p class="sub">多文件上传 → 自动切片 → 加入工作区向量化。密钥只保存在本机浏览器，不写入代码。</p>
+<h2>AnythingLLM 文档上传与问答</h2>
+<p class="sub">多文件上传 → 自动切片 → 加入工作区向量化 → 知识库问答。密钥只保存在本机浏览器，不写入代码。</p>
 
 <section class="card">
   <h3>1. 连接配置</h3>
@@ -85,6 +85,27 @@
 <h3 style="font-size:15px">日志</h3>
 <div id="log"></div>
 
+<section class="card">
+  <h3>3. 知识库问答</h3>
+  <p class="hint" style="margin-top:0">基于当前选中的工作区提问（RAG 检索），回答会附引用来源。模式：chat 带上下文，query 单次检索。</p>
+  <div class="row">
+    <label class="field" style="flex:1;min-width:260px">问题
+      <input type="text" id="question" placeholder="例如：文档里关于 XX 的结论是什么？" style="width:100%">
+    </label>
+    <label class="field">模式
+      <select id="chatMode" style="min-width:110px">
+        <option value="query">query（单次检索）</option>
+        <option value="chat">chat（带上下文）</option>
+      </select>
+    </label>
+    <button id="btnAsk" class="primary">提问</button>
+  </div>
+  <div id="answer" style="display:none;margin-top:12px;border-top:1px solid #eaeef2;padding-top:12px">
+    <p id="answerText" style="white-space:pre-wrap;font-size:14px;line-height:1.7;margin:0 0 8px"></p>
+    <p id="answerSources" class="hint" style="margin:0"></p>
+  </div>
+</section>
+
 <script>
 'use strict';
 
@@ -92,10 +113,22 @@ const STORE_KEY = 'anythingllm.uploader.settings';
 const DEFAULT_BASE = 'http://localhost:3001';
 
 const $ = id => document.getElementById(id);
+// 日志用 DOM + textContent 写入（M3）：服务端/网络中间件返回的任何字符
+// 都只按纯文本显示，不再经 innerHTML 拼接，消除注入执行风险。
 const log = (msg, cls) => {
   const t = new Date().toLocaleTimeString();
   const color = cls === 'err' ? '#f44' : cls === 'warn' ? '#ff0' : '#0f0';
-  $('log').innerHTML += `<span style="color:#666">${t}</span> <span style="color:${color}">${msg}</span>\n`;
+  const timeEl = document.createElement('span');
+  timeEl.style.color = '#666';
+  timeEl.textContent = t;
+  const msgEl = document.createElement('span');
+  msgEl.style.color = color;
+  msgEl.textContent = String(msg);
+  const line = document.createElement('div');
+  line.appendChild(timeEl);
+  line.appendChild(document.createTextNode(' '));
+  line.appendChild(msgEl);
+  $('log').appendChild(line);
   $('log').scrollTop = $('log').scrollHeight;
 };
 
@@ -238,6 +271,49 @@ $('btn').onclick = async () => {
   setBusy(false);
   $('stat').textContent += failed ? '　（失败项请查看日志）' : '　（已加入工作区并开始向量化）';
 };
+
+/* ---------------- 知识库问答（L4：上传 → 向量化 → 提问 完整闭环） ---------------- */
+
+$('btnAsk').onclick = async () => {
+  const s = readSettings();
+  const message = $('question').value.trim();
+  if (!s.apiKey) { log('请先填写 API Key', 'err'); return; }
+  if (!s.slug) { log('请先刷新并选择工作区', 'err'); return; }
+  if (!message) { log('请先输入问题', 'err'); return; }
+
+  $('btnAsk').disabled = true;
+  $('btnAsk').textContent = '正在检索…';
+  try {
+    const res = await apiFetch(`/workspace/${encodeURIComponent(s.slug)}/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, mode: $('chatMode').value })
+    });
+    const raw = await res.text();
+    if (!res.ok) throw new Error(`${res.status} ${raw.slice(0, 300)}`);
+    const data = JSON.parse(raw);
+    if (data.error) throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+
+    // 回答与来源一律 textContent 渲染，防止响应内容注入页面
+    $('answerText').textContent = (data.textResponse || '').trim() || '（工作区没有返回文本回答）';
+    const sources = data.sources || [];
+    if (sources.length) {
+      const names = sources.slice(0, 5).map((src, i) => `${i + 1}. ${src.title || src.docpath || '未知文档'}`);
+      $('answerSources').textContent = `引用来源（${sources.length} 条）：\n` + names.join('\n');
+    } else {
+      $('answerSources').textContent = '本次回答没有引用到知识库文档（可能问题与文档内容无关）。';
+    }
+    $('answer').style.display = 'block';
+    log(`✅ 问答完成（${sources.length} 条引用）`, 'ok');
+  } catch (e) {
+    log(`❌ 问答失败：${e.message}`, 'err');
+  } finally {
+    $('btnAsk').disabled = false;
+    $('btnAsk').textContent = '提问';
+  }
+};
+
+$('question').addEventListener('keydown', e => { if (e.key === 'Enter') $('btnAsk').click(); });
 
 restoreSettings();
 </script>
